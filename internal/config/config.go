@@ -14,8 +14,7 @@ type Config struct {
 	DatabaseURL         string
 	JWTIssuer           string
 	JWKSURL             string
-	Audience            string
-	AuthMode            string
+	Audience            string // aud claim the service requires on inbound tokens
 	ServiceClientID     string
 	ServiceClientSecret string
 	AuthTokenURL        string
@@ -29,16 +28,11 @@ type Config struct {
 	WriteTimeout        time.Duration
 }
 
+// Load reads configuration from env. Hard cutover: every request must carry a
+// verifiable Bearer token with aud=iag.crm. AUTH_MODE no longer exists.
 func Load() (Config, error) {
 	env := strings.ToLower(strings.TrimSpace(envOr("ENVIRONMENT", envOr("APP_ENV", "development"))))
 	issuer := envOr("JWT_ISSUER", "http://localhost:3001")
-	authMode := strings.ToLower(strings.TrimSpace(envOr("AUTH_MODE", "jwt")))
-	switch authMode {
-	case "jwt", "none":
-	default:
-		return Config{}, fmt.Errorf("AUTH_MODE must be jwt or none (got %q)", authMode)
-	}
-
 	origins := envOr("ALLOWED_ORIGINS", envOr("CORS_ORIGIN", "http://localhost:3000,http://localhost:5173"))
 
 	cfg := Config{
@@ -49,7 +43,6 @@ func Load() (Config, error) {
 		JWTIssuer:           issuer,
 		JWKSURL:             envOr("JWKS_URL", strings.TrimRight(issuer, "/")+"/.well-known/jwks.json"),
 		Audience:            envOr("AUDIENCE", "iag.crm"),
-		AuthMode:            authMode,
 		ServiceClientID:     envOr("SERVICE_CLIENT_ID", "iag-crm"),
 		ServiceClientSecret: strings.TrimSpace(os.Getenv("SERVICE_CLIENT_SECRET")),
 		AuthTokenURL:        envOr("AUTH_TOKEN_URL", strings.TrimRight(issuer, "/")+"/oauth/token"),
@@ -72,8 +65,8 @@ func (c Config) Validate() error {
 	if c.Audience == "" {
 		return fmt.Errorf("AUDIENCE is required (e.g. iag.crm)")
 	}
-	if c.IsProduction() && c.AuthMode != "jwt" {
-		return fmt.Errorf("AUTH_MODE must be jwt in production")
+	if c.JWKSURL == "" {
+		return fmt.Errorf("JWKS_URL is required")
 	}
 	if c.IsProduction() && c.CORSOrigin == "*" {
 		return fmt.Errorf("set ALLOWED_ORIGINS in production (not *)")

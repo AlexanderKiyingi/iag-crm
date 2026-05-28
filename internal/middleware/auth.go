@@ -10,13 +10,14 @@ import (
 	"github.com/iag/crm/backend/internal/platformauth"
 )
 
+// PlatformAuth verifies every inbound request's Bearer JWT (issuer + aud
+// enforced by the verifier). No header trust, no dev bypass.
 type PlatformAuth struct {
-	mode     string
 	verifier *platformauth.Verifier
 }
 
-func NewPlatformAuth(mode string, verifier *platformauth.Verifier) *PlatformAuth {
-	return &PlatformAuth{mode: mode, verifier: verifier}
+func NewPlatformAuth(verifier *platformauth.Verifier) *PlatformAuth {
+	return &PlatformAuth{verifier: verifier}
 }
 
 func isPublicPath(path string) bool {
@@ -36,8 +37,8 @@ func (m *PlatformAuth) AttachPrincipal() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		if m.mode == "none" {
-			c.Next()
+		if m.verifier == nil {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "jwt verifier not configured"})
 			return
 		}
 		header := c.GetHeader("Authorization")

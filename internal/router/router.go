@@ -43,10 +43,7 @@ func New(opts Options) *gin.Engine {
 	r.GET("/v1/health/ready", api.Ready)
 
 	v1 := r.Group("/v1")
-	if opts.Cfg.AuthMode == "none" {
-		v1.Use(func(c *gin.Context) { auth.SetAuthModeNone(c); c.Next() })
-	}
-	if opts.PlatformAuth != nil && opts.Cfg.AuthMode != "none" {
+	if opts.PlatformAuth != nil {
 		v1.Use(opts.PlatformAuth.AttachPrincipal())
 	}
 	v1.Use(middleware.RequestAudit(opts.Repo))

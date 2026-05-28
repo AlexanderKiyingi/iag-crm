@@ -69,26 +69,21 @@ func main() {
 	ctx, cancelApp := context.WithCancel(context.Background())
 	defer cancelApp()
 
-	var verifier *platformauth.Verifier
-	if cfg.AuthMode == "jwt" {
-		verifier = platformauth.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer, cfg.Audience)
-		jwksCtx, jwksCancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := verifier.Refresh(jwksCtx); err != nil {
-			jwksCancel()
-			slog.Error("jwks refresh", "err", err)
-			os.Exit(1)
-		}
+	verifier := platformauth.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer, cfg.Audience)
+	jwksCtx, jwksCancel := context.WithTimeout(ctx, 10*time.Second)
+	if err := verifier.Refresh(jwksCtx); err != nil {
 		jwksCancel()
-		verifier.StartRefreshLoop(ctx, 15*time.Minute)
-	} else {
-		slog.Warn("AUTH_MODE=none — open API for local development only")
+		slog.Error("jwks refresh", "err", err)
+		os.Exit(1)
 	}
+	jwksCancel()
+	verifier.StartRefreshLoop(ctx, 15*time.Minute)
 
 	if cfg.ServiceClientSecret != "" {
 		go registerPermissionsLoop(ctx, cfg)
 	}
 
-	platformAuth := middleware.NewPlatformAuth(cfg.AuthMode, verifier)
+	platformAuth := middleware.NewPlatformAuth(verifier)
 	repo := store.New(pool)
 	eventBus := events.NewFromEnv()
 	defer eventBus.Close()
@@ -115,7 +110,6 @@ func main() {
 	go func() {
 		slog.Info("CRM API listening",
 			"addr", cfg.Addr,
-			"authMode", cfg.AuthMode,
 			"audience", cfg.Audience,
 			"gatewayPrefix", cfg.GatewayAPIPrefix,
 		)

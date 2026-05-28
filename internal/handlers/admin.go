@@ -166,7 +166,6 @@ func (h *API) PlatformStatus(c *gin.Context) {
 		"service":           h.Cfg.ServiceName,
 		"database":          dbOK,
 		"event_bus_enabled": busEnabled,
-		"auth_mode":         h.Cfg.AuthMode,
 		"audience":          h.Cfg.Audience,
 	})
 }

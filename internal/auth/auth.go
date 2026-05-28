@@ -1,3 +1,6 @@
+// Package auth implements per-route permission checks. The platform
+// middleware (internal/middleware) is responsible for verifying the inbound
+// JWT and attaching claims; this package only inspects those claims.
 package auth
 
 import (
@@ -8,26 +11,7 @@ import (
 	"github.com/iag/crm/backend/internal/middleware"
 )
 
-// AuthModeNone is set on the Gin context when AUTH_MODE=none (local dev).
-const AuthModeNone = "auth_mode_none"
-
-func SetAuthModeNone(c *gin.Context) {
-	c.Set(AuthModeNone, true)
-}
-
-func isAuthDisabled(c *gin.Context) bool {
-	if v, ok := c.Get(AuthModeNone); ok {
-		if b, ok := v.(bool); ok && b {
-			return true
-		}
-	}
-	return false
-}
-
 func HasPerm(c *gin.Context, codename string) bool {
-	if isAuthDisabled(c) {
-		return true
-	}
 	claims, ok := middleware.Claims(c)
 	if !ok || claims == nil {
 		return false
@@ -53,10 +37,6 @@ func HasPerm(c *gin.Context, codename string) bool {
 
 func RequirePerm(codename string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if isAuthDisabled(c) {
-			c.Next()
-			return
-		}
 		if _, ok := middleware.Claims(c); !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
@@ -71,10 +51,6 @@ func RequirePerm(codename string) gin.HandlerFunc {
 
 func RequireAnyPerm(codenames ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if isAuthDisabled(c) {
-			c.Next()
-			return
-		}
 		if _, ok := middleware.Claims(c); !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
@@ -91,10 +67,6 @@ func RequireAnyPerm(codenames ...string) gin.HandlerFunc {
 
 func RequireStaff() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if isAuthDisabled(c) {
-			c.Next()
-			return
-		}
 		claims, ok := middleware.Claims(c)
 		if !ok || claims == nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})

@@ -2,19 +2,18 @@ package config
 
 import "testing"
 
-func TestValidateProductionRequiresJWTAndSecret(t *testing.T) {
+func TestValidateProductionRequiresJWKSAndSecret(t *testing.T) {
 	cfg := Config{
 		Environment: "production",
 		DatabaseURL: "postgres://u:p@localhost/db",
 		Audience:    "iag.crm",
-		AuthMode:    "none",
+		JWKSURL:     "https://auth.example.com/.well-known/jwks.json",
 		CORSOrigin:  "https://app.example.com",
 	}
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected AUTH_MODE=jwt requirement in production")
+		t.Fatal("expected SERVICE_CLIENT_SECRET requirement in production")
 	}
 
-	cfg.AuthMode = "jwt"
 	cfg.ServiceClientSecret = "short"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected SERVICE_CLIENT_SECRET min length in production")
@@ -31,11 +30,22 @@ func TestValidateRejectsWildcardCORSInProduction(t *testing.T) {
 		Environment:         "production",
 		DatabaseURL:         "postgres://u:p@localhost/db",
 		Audience:            "iag.crm",
-		AuthMode:            "jwt",
+		JWKSURL:             "https://auth.example.com/.well-known/jwks.json",
 		CORSOrigin:          "*",
 		ServiceClientSecret: "production-secret-min-16",
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected wildcard CORS rejection in production")
+	}
+}
+
+func TestValidateRequiresJWKSURL(t *testing.T) {
+	cfg := Config{
+		Environment: "development",
+		DatabaseURL: "postgres://u:p@localhost/db",
+		Audience:    "iag.crm",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected JWKS_URL requirement")
 	}
 }
