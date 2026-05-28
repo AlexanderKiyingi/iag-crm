@@ -50,6 +50,10 @@ jobs:
         env:
           DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable
 
-# Note: docker build is intentionally not in inner CI — the CRM Dockerfile
-# expects the meta-repo root as build context (COPYs shared/platform-go). The
-# umbrella workflow .github/workflows/crm.yml handles the image build.
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image (standalone target)
+        run: docker build --target standalone -t iag-crm:ci .
