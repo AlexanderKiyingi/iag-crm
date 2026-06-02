@@ -11,6 +11,7 @@ import (
 	"github.com/iag/crm/backend/internal/auth"
 	"github.com/iag/crm/backend/internal/middleware"
 	"github.com/iag/crm/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *API) permissionContext(c *gin.Context) models.PermissionContext {
@@ -70,7 +71,7 @@ func (h *API) ListAudit(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	items, total, err := h.Repo.ListAudit(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "audit list failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "audit list failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "meta": gin.H{"total": total, "limit": limit}})
@@ -83,7 +84,7 @@ func (h *API) GetAuditEntry(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "audit get failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "audit get failed")
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -100,7 +101,7 @@ func (h *API) AppendAuditEntry(c *gin.Context) {
 	}
 	entry, err := h.Repo.AppendAudit(c.Request.Context(), in.Action, in.Detail, auth.ActorName(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "audit append failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "audit append failed")
 		return
 	}
 	c.JSON(http.StatusCreated, entry)
@@ -110,7 +111,7 @@ func (h *API) AdminAuditLogs(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	items, total, err := h.Repo.ListAPIAuditLogs(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "api audit failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "api audit failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "meta": gin.H{"total": total}})
@@ -120,7 +121,7 @@ func (h *API) AdminMonitoringSummary(c *gin.Context) {
 	busEnabled := h.Events != nil && h.Events.Enabled()
 	summary, err := h.Repo.MonitoringSummaryWithBus(c.Request.Context(), busEnabled)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "monitoring failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "monitoring failed")
 		return
 	}
 	c.JSON(http.StatusOK, summary)
@@ -130,7 +131,7 @@ func (h *API) AdminMonitoringActivity(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
 	items, err := h.Repo.APIMonitoringActivity(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "activity failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "activity failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -173,7 +174,7 @@ func (h *API) PlatformStatus(c *gin.Context) {
 func (h *API) InsightsSignals(c *gin.Context) {
 	items, err := h.Repo.ListBuyingSignals(c.Request.Context(), 20)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "signals failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "signals failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -182,7 +183,7 @@ func (h *API) InsightsSignals(c *gin.Context) {
 func (h *API) GetLoyaltyTierRules(c *gin.Context) {
 	rules, err := h.Repo.GetLoyaltyTierRules(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "tier rules failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "tier rules failed")
 		return
 	}
 	c.JSON(http.StatusOK, rules)
@@ -196,7 +197,7 @@ func (h *API) PutLoyaltyTierRules(c *gin.Context) {
 	}
 	rules, err := h.Repo.PutLoyaltyTierRules(c.Request.Context(), in, auth.ActorName(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "tier rules update failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "tier rules update failed")
 		return
 	}
 	h.recordAudit(c, "TierRulesSaved", "Updated Pearl Club tier thresholds")

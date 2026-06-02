@@ -8,6 +8,7 @@ import (
 	"github.com/iag/crm/backend/internal/middleware"
 	"github.com/iag/crm/backend/internal/models"
 	"github.com/iag/crm/backend/internal/store"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *API) sessionFromContext(c *gin.Context) map[string]any {
@@ -64,7 +65,7 @@ func (h *API) PermissionsCatalog(c *gin.Context) {
 func (h *API) Lookups(c *gin.Context) {
 	items, err := h.Repo.Lookups(c.Request.Context(), c.Param("kind"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -74,7 +75,7 @@ func genericList(c *gin.Context, fn func(ctx *gin.Context, opts store.ListOpts) 
 	opts := scopedListOpts(c)
 	items, total, err := fn(c, opts)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "list failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "list failed")
 		return
 	}
 	paginated(c, items, total)
@@ -88,7 +89,7 @@ func genericCreate(c *gin.Context, fn func(ctx *gin.Context, in map[string]any) 
 	}
 	item, err := fn(c, in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "create failed")
 		return
 	}
 	c.JSON(http.StatusCreated, item)
@@ -216,7 +217,7 @@ func (h *API) ListMQLs(c *gin.Context) {
 func (h *API) GetBrandKit(c *gin.Context) {
 	kit, err := h.Repo.GetBrandKit(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "brand kit failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "brand kit failed")
 		return
 	}
 	c.JSON(http.StatusOK, kit)
@@ -230,7 +231,7 @@ func (h *API) DemandGenMetrics(c *gin.Context) {
 func (h *API) BridgeStreams(c *gin.Context) {
 	streams, err := h.Repo.ListBridgeStreams(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "streams failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "streams failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"streams": streams})
@@ -239,7 +240,7 @@ func (h *API) BridgeStreams(c *gin.Context) {
 func (h *API) BridgePendingImports(c *gin.Context) {
 	items, total, err := h.Repo.ListPendingImports(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "imports failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "imports failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "meta": gin.H{"total": total}})
@@ -248,7 +249,7 @@ func (h *API) BridgePendingImports(c *gin.Context) {
 func (h *API) BridgeFieldMappings(c *gin.Context) {
 	items, err := h.Repo.ListFieldMappings(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "mappings failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "mappings failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -257,7 +258,7 @@ func (h *API) BridgeFieldMappings(c *gin.Context) {
 func (h *API) BridgeSyncLog(c *gin.Context) {
 	items, err := h.Repo.ListSyncLog(c.Request.Context(), 50)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "sync log failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "sync log failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -293,7 +294,7 @@ func (h *API) CreateExportCustomer(c *gin.Context) {
 func (h *API) ListLoyaltyTiers(c *gin.Context) {
 	items, err := h.Repo.ListLoyaltyTiers(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "tiers failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "tiers failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})

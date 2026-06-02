@@ -12,6 +12,7 @@ import (
 	"github.com/iag/crm/backend/internal/middleware"
 	"github.com/iag/crm/backend/internal/models"
 	"github.com/iag/crm/backend/internal/store"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type API struct {
@@ -53,11 +54,11 @@ func paginated[T any](c *gin.Context, data []T, total int) {
 }
 
 func badRequest(c *gin.Context, msg string) {
-	c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+	apierr.JSONStatus(c, http.StatusBadRequest, msg)
 }
 
 func notFound(c *gin.Context) {
-	c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+	apierr.JSONStatus(c, http.StatusNotFound, "not found")
 }
 
 func (h *API) Health(c *gin.Context) {
@@ -81,7 +82,7 @@ func (h *API) Overview(c *gin.Context) {
 	metrics := store.OverviewMetrics(rangeKey)
 	summary, err := h.Repo.PipelineSummary(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "overview failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "overview failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -94,7 +95,7 @@ func (h *API) Overview(c *gin.Context) {
 func (h *API) PipelineBoard(c *gin.Context) {
 	cols, err := h.Repo.PipelineBoard(c.Request.Context(), c.Query("owner"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "pipeline failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "pipeline failed")
 		return
 	}
 	summary, _ := h.Repo.PipelineSummary(c.Request.Context())

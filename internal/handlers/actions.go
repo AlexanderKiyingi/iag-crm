@@ -14,6 +14,7 @@ import (
 	"github.com/iag/crm/backend/internal/events"
 	"github.com/iag/crm/backend/internal/models"
 	"github.com/iag/crm/backend/internal/store"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *API) MarkDealWon(c *gin.Context) {
@@ -23,7 +24,7 @@ func (h *API) MarkDealWon(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "mark won failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "mark won failed")
 		return
 	}
 	h.recordAudit(c, "DealWon", store.AuditDetail("deal", item.ID, "marked won"))
@@ -42,7 +43,7 @@ func (h *API) SendQuote(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "send quote failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "send quote failed")
 		return
 	}
 	h.recordAudit(c, "QuoteSent", store.AuditDetail("quote", item.ID, "sent"))
@@ -56,7 +57,7 @@ func (h *API) SignQuote(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "sign quote failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "sign quote failed")
 		return
 	}
 	h.recordAudit(c, "QuoteSigned", store.AuditDetail("quote", item.ID, "signed"))
@@ -69,7 +70,7 @@ func (h *API) DeleteContact(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete contact failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "delete contact failed")
 		return
 	}
 	h.recordAudit(c, "ContactDeleted", store.AuditDetail("contact", c.Param("id"), "deleted"))
@@ -90,7 +91,7 @@ func (h *API) AssignPendingImport(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "assign import failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "assign import failed")
 		return
 	}
 	h.recordAudit(c, "BridgeImportAssigned", fmt.Sprintf("pending import %s → %s", c.Param("id"), in.Owner))
@@ -136,7 +137,7 @@ func (h *API) ActivitiesStream(c *gin.Context) {
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming unsupported"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
 

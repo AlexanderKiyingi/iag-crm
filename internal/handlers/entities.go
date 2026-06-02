@@ -9,12 +9,13 @@ import (
 
 	"github.com/iag/crm/backend/internal/events"
 	"github.com/iag/crm/backend/internal/store"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *API) ListAccounts(c *gin.Context) {
 	items, total, err := h.Repo.ListAccounts(c.Request.Context(), scopedListOpts(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "list accounts failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "list accounts failed")
 		return
 	}
 	paginated(c, items, total)
@@ -27,7 +28,7 @@ func (h *API) GetAccount(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "get account failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "get account failed")
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -41,7 +42,7 @@ func (h *API) CreateAccount(c *gin.Context) {
 	}
 	item, err := h.Repo.CreateAccount(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create account failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "create account failed")
 		return
 	}
 	h.recordAudit(c, "AccountCreated", store.AuditDetail("account", item.ID, "created"))
@@ -60,7 +61,7 @@ func (h *API) PatchAccount(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "update account failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "update account failed")
 		return
 	}
 	h.recordAudit(c, "AccountUpdated", store.AuditDetail("account", item.ID, "updated"))
@@ -69,7 +70,7 @@ func (h *API) PatchAccount(c *gin.Context) {
 
 func (h *API) DeleteAccount(c *gin.Context) {
 	if err := h.Repo.DeleteAccount(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete account failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "delete account failed")
 		return
 	}
 	h.recordAudit(c, "AccountDeleted", store.AuditDetail("account", c.Param("id"), "deleted"))
@@ -79,7 +80,7 @@ func (h *API) DeleteAccount(c *gin.Context) {
 func (h *API) ListContacts(c *gin.Context) {
 	items, total, err := h.Repo.ListContacts(c.Request.Context(), scopedListOpts(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "list contacts failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "list contacts failed")
 		return
 	}
 	paginated(c, items, total)
@@ -92,7 +93,7 @@ func (h *API) GetContact(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "get contact failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "get contact failed")
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -106,7 +107,7 @@ func (h *API) CreateContact(c *gin.Context) {
 	}
 	item, err := h.Repo.CreateContact(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create contact failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "create contact failed")
 		return
 	}
 	c.JSON(http.StatusCreated, item)
@@ -124,7 +125,7 @@ func (h *API) PatchContact(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "update contact failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "update contact failed")
 		return
 	}
 	h.recordAudit(c, "ContactUpdated", store.AuditDetail("contact", item.ID, "updated"))
@@ -134,7 +135,7 @@ func (h *API) PatchContact(c *gin.Context) {
 func (h *API) ListLeads(c *gin.Context) {
 	items, total, err := h.Repo.ListLeads(c.Request.Context(), scopedListOpts(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "list leads failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "list leads failed")
 		return
 	}
 	paginated(c, items, total)
@@ -147,7 +148,7 @@ func (h *API) GetLead(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "get lead failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "get lead failed")
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -161,7 +162,7 @@ func (h *API) CreateLead(c *gin.Context) {
 	}
 	item, err := h.Repo.CreateLead(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create lead failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "create lead failed")
 		return
 	}
 	c.JSON(http.StatusCreated, item)
@@ -179,7 +180,7 @@ func (h *API) PatchLead(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "update lead failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "update lead failed")
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -194,7 +195,7 @@ func (h *API) ConvertLead(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "convert lead failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "convert lead failed")
 		return
 	}
 	h.recordAudit(c, "LeadConverted", store.AuditDetail("lead", c.Param("id"), "converted to deal "+item.ID))
@@ -209,7 +210,7 @@ func (h *API) ConvertLead(c *gin.Context) {
 func (h *API) ListDeals(c *gin.Context) {
 	items, total, err := h.Repo.ListDeals(c.Request.Context(), scopedListOpts(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "list deals failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "list deals failed")
 		return
 	}
 	paginated(c, items, total)
@@ -222,7 +223,7 @@ func (h *API) GetDeal(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "get deal failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "get deal failed")
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -236,7 +237,7 @@ func (h *API) CreateDeal(c *gin.Context) {
 	}
 	item, err := h.Repo.CreateDeal(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create deal failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "create deal failed")
 		return
 	}
 	h.recordAudit(c, "DealCreated", store.AuditDetail("deal", item.ID, "created"))
@@ -255,7 +256,7 @@ func (h *API) PatchDeal(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "update deal failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "update deal failed")
 		return
 	}
 	h.recordAudit(c, "DealUpdated", store.AuditDetail("deal", item.ID, "updated"))
@@ -281,7 +282,7 @@ func (h *API) SetDealStage(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "update stage failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "update stage failed")
 		return
 	}
 	h.recordAudit(c, "DealStageChanged", store.AuditDetail("deal", item.ID, "stage="+in.Stage))
@@ -296,7 +297,7 @@ func (h *API) SetDealStage(c *gin.Context) {
 func (h *API) ListQuotes(c *gin.Context) {
 	items, total, err := h.Repo.ListQuotes(c.Request.Context(), scopedListOpts(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "list quotes failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "list quotes failed")
 		return
 	}
 	paginated(c, items, total)
@@ -310,7 +311,7 @@ func (h *API) CreateQuote(c *gin.Context) {
 	}
 	item, err := h.Repo.CreateQuote(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create quote failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "create quote failed")
 		return
 	}
 	c.JSON(http.StatusCreated, item)
@@ -323,7 +324,7 @@ func (h *API) GetQuote(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "get quote failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "get quote failed")
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -341,7 +342,7 @@ func (h *API) PatchQuote(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "update quote failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "update quote failed")
 		return
 	}
 	h.recordAudit(c, "QuoteUpdated", store.AuditDetail("quote", item.ID, "updated"))
@@ -351,7 +352,7 @@ func (h *API) PatchQuote(c *gin.Context) {
 func (h *API) ListActivities(c *gin.Context) {
 	items, total, err := h.Repo.ListActivities(c.Request.Context(), scopedListOpts(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "list activities failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "list activities failed")
 		return
 	}
 	paginated(c, items, total)
@@ -365,7 +366,7 @@ func (h *API) CreateActivity(c *gin.Context) {
 	}
 	item, err := h.Repo.CreateActivity(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create activity failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "create activity failed")
 		return
 	}
 	c.JSON(http.StatusCreated, item)
@@ -374,7 +375,7 @@ func (h *API) CreateActivity(c *gin.Context) {
 func (h *API) ListTickets(c *gin.Context) {
 	items, total, err := h.Repo.ListTickets(c.Request.Context(), scopedListOpts(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "list tickets failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "list tickets failed")
 		return
 	}
 	paginated(c, items, total)
@@ -388,7 +389,7 @@ func (h *API) CreateTicket(c *gin.Context) {
 	}
 	item, err := h.Repo.CreateTicket(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create ticket failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "create ticket failed")
 		return
 	}
 	h.recordAudit(c, "TicketCreated", store.AuditDetail("ticket", item.ID, "created"))
@@ -412,7 +413,7 @@ func (h *API) PatchTicket(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "update ticket failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "update ticket failed")
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -421,7 +422,7 @@ func (h *API) PatchTicket(c *gin.Context) {
 func (h *API) ListCampaigns(c *gin.Context) {
 	items, total, err := h.Repo.ListCampaigns(c.Request.Context(), scopedListOpts(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "list campaigns failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "list campaigns failed")
 		return
 	}
 	paginated(c, items, total)
@@ -435,7 +436,7 @@ func (h *API) CreateCampaign(c *gin.Context) {
 	}
 	item, err := h.Repo.CreateCampaign(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create campaign failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "create campaign failed")
 		return
 	}
 	c.JSON(http.StatusCreated, item)
