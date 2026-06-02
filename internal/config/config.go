@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/alvor-technologies/iag-platform-go/corsenv"
 )
 
 type Config struct {
@@ -33,7 +35,7 @@ type Config struct {
 func Load() (Config, error) {
 	env := strings.ToLower(strings.TrimSpace(envOr("ENVIRONMENT", envOr("APP_ENV", "development"))))
 	issuer := envOr("JWT_ISSUER", "http://localhost:3001")
-	origins := envOr("ALLOWED_ORIGINS", envOr("CORS_ORIGIN", "http://localhost:3000,http://localhost:5173"))
+	origins := corsenv.Allowlist(corsenv.DefaultDevOrigins)
 
 	cfg := Config{
 		ServiceName:         envOr("SERVICE_NAME", "crm"),

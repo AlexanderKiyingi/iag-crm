@@ -8,6 +8,7 @@ import (
 
 	"github.com/iag/crm/backend/internal/ctxkeys"
 	"github.com/iag/crm/backend/internal/platformauth"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // PlatformAuth verifies every inbound request's Bearer JWT (issuer + aud
@@ -38,18 +39,18 @@ func (m *PlatformAuth) AttachPrincipal() gin.HandlerFunc {
 			return
 		}
 		if m.verifier == nil {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "jwt verifier not configured"})
+			apierr.Write(c, http.StatusServiceUnavailable, apierr.CodeServiceUnavailable, "JWT verifier not configured")
 			return
 		}
 		header := c.GetHeader("Authorization")
 		if header == "" || !strings.HasPrefix(header, "Bearer ") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
+			apierr.Unauthorized(c, "missing bearer token")
 			return
 		}
 		token := strings.TrimPrefix(header, "Bearer ")
 		claims, err := m.verifier.Verify(token)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			apierr.Unauthorized(c, "invalid or expired token")
 			return
 		}
 		c.Set(ctxkeys.Claims, claims)
