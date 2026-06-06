@@ -78,20 +78,25 @@ func (c *Client) ListOutlets(ctx context.Context, limit, offset int) ([]Outlet, 
 	}
 	path := fmt.Sprintf("/v1/outlets?limit=%d&offset=%d", limit, offset)
 	var wrapped struct {
-		Data []Outlet `json:"data"`
-		Meta struct {
+		Items []Outlet `json:"items"`
+		Data  []Outlet `json:"data"`
+		Meta  struct {
 			Total int `json:"total"`
 		} `json:"meta"`
 	}
 	if err := c.getJSON(ctx, path, &wrapped); err != nil {
 		return nil, 0, err
 	}
-	if len(wrapped.Data) > 0 {
+	items := wrapped.Items
+	if len(items) == 0 {
+		items = wrapped.Data
+	}
+	if len(items) > 0 {
 		total := wrapped.Meta.Total
 		if total == 0 {
-			total = len(wrapped.Data)
+			total = len(items)
 		}
-		return wrapped.Data, total, nil
+		return items, total, nil
 	}
 	var flat []Outlet
 	if err := c.getJSON(ctx, path, &flat); err != nil {
