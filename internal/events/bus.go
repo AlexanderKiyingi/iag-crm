@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -17,17 +18,29 @@ const (
 	Source      = "iag.crm"
 	TopicCommercial = "iag.commercial"
 
-	TypeDealUpdated    = "crm.deal.updated"
-	TypeDealWon        = "crm.deal.won"
-	TypeLeadConverted  = "crm.lead.converted"
-	TypeBridgeSynced   = "crm.bridge.synced"
-	TypeTicketCreated  = "crm.ticket.created"
-	TypeTierRulesSaved = "crm.loyalty.tier_rules.saved"
+	TypeDealUpdated     = "crm.deal.updated"
+	TypeDealWon         = "crm.deal.won"
+	TypeLeadConverted   = "crm.lead.converted"
+	TypeBridgeSynced    = "crm.bridge.synced"
+	TypeTicketCreated   = "crm.ticket.created"
+	TypeTierRulesSaved  = "crm.loyalty.tier_rules.saved"
+	TypeQuoteSent       = "crm.quote.sent"
+	TypeQuoteSigned     = "crm.quote.signed"
+	TypeAccountCreated  = "crm.account.created"
+	TypeContactCreated  = "crm.contact.created"
+	TypeCampaignLaunched = "crm.campaign.launched"
+	TypeJourneyEnrolled  = "crm.journey.enrolled"
+	TypeJourneyCompleted = "crm.journey.completed"
 )
 
 type Bus struct {
 	writer  *kafka.Writer
 	enabled bool
+	store   outboxEnqueuer
+}
+
+type outboxEnqueuer interface {
+	Enqueue(ctx context.Context, eventType, key string, payload any) error
 }
 
 type Config struct {
@@ -67,6 +80,15 @@ func (b *Bus) Close() error {
 
 func (b *Bus) Enabled() bool { return b != nil && b.enabled }
 
+func (b *Bus) SetOutbox(store outboxEnqueuer) {
+	if b == nil {
+		return
+	}
+	b.store = store
+}
+
+func (b *Bus) UsesOutbox() bool { return b != nil && b.store != nil }
+
 type PlatformEvent struct {
 	ID          string         `json:"id"`
 	Type        string         `json:"type"`
@@ -76,35 +98,93 @@ type PlatformEvent struct {
 	Data        map[string]any `json:"data"`
 }
 
-func (b *Bus) PublishCommercial(ctx context.Context, eventType string, data map[string]any, key string) {
+func finalizeEvent(evt PlatformEvent) PlatformEvent {
+	if evt.ID == "" {
+		evt.ID = uuid.NewString()
+	}
+	if evt.Time == "" {
+		evt.Time = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if evt.Source == "" {
+		evt.Source = Source
+	}
+	if evt.SpecVersion == "" {
+		evt.SpecVersion = SpecVersion
+	}
+	return evt
+}
+
+func eventKey(explicit string, evt PlatformEvent) string {
+	if explicit != "" {
+		return explicit
+	}
+	return evt.ID
+}
+
+func (b *Bus) publish(ctx context.Context, evt PlatformEvent, key string) error {
 	if !b.enabled || b.writer == nil {
-		return
+		return nil
 	}
-	evt := PlatformEvent{
-		ID:          uuid.NewString(),
-		Type:        eventType,
-		Time:        time.Now().UTC().Format(time.RFC3339Nano),
-		Source:      Source,
-		SpecVersion: SpecVersion,
-		Data:        data,
-	}
+	evt = finalizeEvent(evt)
 	body, err := json.Marshal(evt)
 	if err != nil {
-		slog.Warn("crm event marshal failed", "type", eventType, "err", err)
-		return
+		return err
 	}
+	return b.writer.WriteMessages(ctx, kafka.Message{
+		Topic: TopicCommercial,
+		Key:   []byte(eventKey(key, evt)),
+		Value: body,
+		Headers: []kafka.Header{
+			{Key: "ce-type", Value: []byte(evt.Type)},
+			{Key: "ce-source", Value: []byte(evt.Source)},
+		},
+	})
+}
+
+// DispatchOutbox writes a pre-finalized outbox row to Kafka.
+func (b *Bus) DispatchOutbox(ctx context.Context, eventType string, eventKey string, payload []byte) error {
+	if !b.enabled || b.writer == nil {
+		return nil
+	}
+	var evt PlatformEvent
+	if err := json.Unmarshal(payload, &evt); err != nil {
+		return fmt.Errorf("decode outbox payload: %w", err)
+	}
+	if evt.Type == "" {
+		evt.Type = eventType
+	}
+	evt = finalizeEvent(evt)
+	body, err := json.Marshal(evt)
+	if err != nil {
+		return err
+	}
+	key := eventKey
 	if key == "" {
 		key = evt.ID
 	}
-	if err := b.writer.WriteMessages(ctx, kafka.Message{
+	return b.writer.WriteMessages(ctx, kafka.Message{
 		Topic: TopicCommercial,
 		Key:   []byte(key),
 		Value: body,
 		Headers: []kafka.Header{
-			{Key: "ce-type", Value: []byte(eventType)},
-			{Key: "ce-source", Value: []byte(Source)},
+			{Key: "ce-type", Value: []byte(evt.Type)},
+			{Key: "ce-source", Value: []byte(evt.Source)},
 		},
-	}); err != nil {
+	})
+}
+
+func (b *Bus) PublishCommercial(ctx context.Context, eventType string, data map[string]any, key string) {
+	if !b.enabled {
+		return
+	}
+	evt := finalizeEvent(PlatformEvent{Type: eventType, Data: data})
+	if b.store != nil {
+		if err := b.store.Enqueue(ctx, eventType, eventKey(key, evt), evt); err != nil {
+			slog.Warn("crm event enqueue failed", "type", eventType, "err", err)
+		}
+		return
+	}
+	if err := b.publish(ctx, evt, key); err != nil {
 		slog.Warn("crm event publish failed", "type", eventType, "err", err)
 	}
 }

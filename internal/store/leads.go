@@ -134,6 +134,13 @@ func (r *Repository) PatchLead(ctx context.Context, id string, patch map[string]
 	return r.GetLead(ctx, id)
 }
 
+func (r *Repository) BumpLeadScore(ctx context.Context, leadID string, delta int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE crm_leads SET score = LEAST(100, score + $2), updated_at = NOW() WHERE id = $1
+	`, leadID, delta)
+	return err
+}
+
 func (r *Repository) ConvertLead(ctx context.Context, leadID string, dealIn DealInput) (models.Deal, error) {
 	lead, err := r.GetLead(ctx, leadID)
 	if err != nil {

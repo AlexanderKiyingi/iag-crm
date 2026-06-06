@@ -327,13 +327,220 @@ func (h *API) AICopilotChat(c *gin.Context) {
 		Message string `json:"message"`
 	}
 	_ = c.ShouldBindJSON(&in)
-	c.JSON(http.StatusOK, gin.H{
-		"reply": "Based on your pipeline, Matsuri Q3 ($280K) and Amsterdam dual-quarter ($340K) are the highest-impact deals this week. Seoul Bean Lab viewed quote QTE-0421 four times — consider a follow-up call.",
-		"actions": []map[string]any{
-			{"label": "Open deal DEAL-0421", "page": "deals"},
-			{"label": "View quote QTE-0421", "page": "quotes"},
-		},
+	suggestions, _ := h.Repo.AISuggestions(c.Request.Context())
+	reply := "Review your top negotiation-stage deals for follow-ups this week."
+	actions := []map[string]any{}
+	for _, s := range suggestions {
+		if id, ok := s["deal_id"].(string); ok {
+			actions = append(actions, map[string]any{"label": s["title"], "page": "deals", "id": id})
+		}
+	}
+	if len(actions) == 0 {
+		actions = append(actions, map[string]any{"label": "Open pipeline", "page": "deals"})
+	}
+	c.JSON(http.StatusOK, gin.H{"reply": reply, "actions": actions})
+}
+
+func genericGet(c *gin.Context, fn func(ctx *gin.Context, id string) (map[string]any, error)) {
+	item, err := fn(c, c.Param("id"))
+	if err != nil {
+		notFound(c)
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
+func genericPatch(c *gin.Context, fn func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error)) {
+	var patch map[string]any
+	if err := c.ShouldBindJSON(&patch); err != nil {
+		badRequest(c, "invalid body")
+		return
+	}
+	item, err := fn(c, c.Param("id"), patch)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "update failed")
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
+func genericDelete(c *gin.Context, fn func(ctx *gin.Context, id string) error) {
+	if err := fn(c, c.Param("id")); err != nil {
+		notFound(c)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *API) GetSegment(c *gin.Context) {
+	genericGet(c, func(ctx *gin.Context, id string) (map[string]any, error) {
+		return h.Repo.GetGenericRow(ctx.Request.Context(), "crm_segments", "name, kind, refresh, rules, member_count", id)
 	})
+}
+func (h *API) PatchSegment(c *gin.Context) {
+	genericPatch(c, func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error) {
+		return h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_segments", id, patch, map[string]string{
+			"name": "name", "kind": "kind", "refresh": "refresh", "rules": "rules",
+		})
+	})
+}
+func (h *API) DeleteSegment(c *gin.Context) {
+	genericDelete(c, func(ctx *gin.Context, id string) error {
+		return h.Repo.DeleteGenericRow(ctx.Request.Context(), "crm_segments", id)
+	})
+}
+
+func (h *API) GetJourney(c *gin.Context) {
+	genericGet(c, func(ctx *gin.Context, id string) (map[string]any, error) {
+		return h.Repo.GetGenericRow(ctx.Request.Context(), "crm_journeys", "name, trigger, template, goal, status, enrolled, conversion", id)
+	})
+}
+func (h *API) PatchJourney(c *gin.Context) {
+	genericPatch(c, func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error) {
+		return h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_journeys", id, patch, map[string]string{
+			"name": "name", "trigger": "trigger", "template": "template", "goal": "goal", "status": "status",
+		})
+	})
+}
+func (h *API) DeleteJourney(c *gin.Context) {
+	genericDelete(c, func(ctx *gin.Context, id string) error {
+		return h.Repo.DeleteGenericRow(ctx.Request.Context(), "crm_journeys", id)
+	})
+}
+
+func (h *API) GetPersona(c *gin.Context) {
+	genericGet(c, func(ctx *gin.Context, id string) (map[string]any, error) {
+		return h.Repo.GetGenericRow(ctx.Request.Context(), "crm_personas", "name, buyer_role, region, seniority, content_tags, story", id)
+	})
+}
+func (h *API) PatchPersona(c *gin.Context) {
+	genericPatch(c, func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error) {
+		return h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_personas", id, patch, map[string]string{
+			"name": "name", "buyer_role": "buyer_role", "region": "region", "story": "story",
+		})
+	})
+}
+func (h *API) DeletePersona(c *gin.Context) {
+	genericDelete(c, func(ctx *gin.Context, id string) error {
+		return h.Repo.DeleteGenericRow(ctx.Request.Context(), "crm_personas", id)
+	})
+}
+
+func (h *API) GetMarketingEvent(c *gin.Context) {
+	genericGet(c, func(ctx *gin.Context, id string) (map[string]any, error) {
+		return h.Repo.GetGenericRow(ctx.Request.Context(), "crm_events", "name, event_type, city, starts_on, ends_on, budget_usd, mql_target, registrations, status", id)
+	})
+}
+func (h *API) PatchMarketingEvent(c *gin.Context) {
+	genericPatch(c, func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error) {
+		return h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_events", id, patch, map[string]string{
+			"name": "name", "type": "event_type", "city": "city", "status": "status",
+		})
+	})
+}
+func (h *API) DeleteMarketingEvent(c *gin.Context) {
+	genericDelete(c, func(ctx *gin.Context, id string) error {
+		return h.Repo.DeleteGenericRow(ctx.Request.Context(), "crm_events", id)
+	})
+}
+
+func (h *API) GetContentAsset(c *gin.Context) {
+	genericGet(c, func(ctx *gin.Context, id string) (map[string]any, error) {
+		return h.Repo.GetGenericRow(ctx.Request.Context(), "crm_content_assets", "name, asset_type, format, tags, status, usage_count", id)
+	})
+}
+func (h *API) PatchContentAsset(c *gin.Context) {
+	genericPatch(c, func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error) {
+		return h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_content_assets", id, patch, map[string]string{
+			"name": "name", "type": "asset_type", "format": "format", "tags": "tags", "status": "status",
+		})
+	})
+}
+func (h *API) DeleteContentAsset(c *gin.Context) {
+	genericDelete(c, func(ctx *gin.Context, id string) error {
+		return h.Repo.DeleteGenericRow(ctx.Request.Context(), "crm_content_assets", id)
+	})
+}
+
+func (h *API) GetEmailSend(c *gin.Context) {
+	genericGet(c, func(ctx *gin.Context, id string) (map[string]any, error) {
+		return h.Repo.GetGenericRow(ctx.Request.Context(), "crm_email_sends", "subject, template, status, scheduled_at, open_rate", id)
+	})
+}
+func (h *API) PatchEmailSend(c *gin.Context) {
+	genericPatch(c, func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error) {
+		return h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_email_sends", id, patch, map[string]string{
+			"subject": "subject", "template": "template", "status": "status", "body": "body",
+		})
+	})
+}
+func (h *API) DeleteEmailSend(c *gin.Context) {
+	genericDelete(c, func(ctx *gin.Context, id string) error {
+		return h.Repo.DeleteGenericRow(ctx.Request.Context(), "crm_email_sends", id)
+	})
+}
+
+func (h *API) GetSocialPost(c *gin.Context) {
+	genericGet(c, func(ctx *gin.Context, id string) (map[string]any, error) {
+		return h.Repo.GetGenericRow(ctx.Request.Context(), "crm_social_posts", "platforms, content, status, scheduled_at", id)
+	})
+}
+func (h *API) PatchSocialPost(c *gin.Context) {
+	genericPatch(c, func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error) {
+		return h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_social_posts", id, patch, map[string]string{
+			"platforms": "platforms", "content": "content", "status": "status",
+		})
+	})
+}
+func (h *API) DeleteSocialPost(c *gin.Context) {
+	genericDelete(c, func(ctx *gin.Context, id string) error {
+		return h.Repo.DeleteGenericRow(ctx.Request.Context(), "crm_social_posts", id)
+	})
+}
+
+func (h *API) GetSEOKeyword(c *gin.Context) {
+	genericGet(c, func(ctx *gin.Context, id string) (map[string]any, error) {
+		return h.Repo.GetGenericRow(ctx.Request.Context(), "crm_seo_keywords", "term, intent, locale, landing_page, rank", id)
+	})
+}
+func (h *API) PatchSEOKeyword(c *gin.Context) {
+	genericPatch(c, func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error) {
+		return h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_seo_keywords", id, patch, map[string]string{
+			"term": "term", "intent": "intent", "locale": "locale", "landing_page": "landing_page",
+		})
+	})
+}
+func (h *API) DeleteSEOKeyword(c *gin.Context) {
+	genericDelete(c, func(ctx *gin.Context, id string) error {
+		return h.Repo.DeleteGenericRow(ctx.Request.Context(), "crm_seo_keywords", id)
+	})
+}
+
+func (h *API) GetBudgetPlan(c *gin.Context) {
+	genericGet(c, func(ctx *gin.Context, id string) (map[string]any, error) {
+		return h.Repo.GetGenericRow(ctx.Request.Context(), "crm_budget_plans", "name, quarter, owner, channels, mql_target, sql_target, won_target", id)
+	})
+}
+func (h *API) PatchBudgetPlan(c *gin.Context) {
+	genericPatch(c, func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error) {
+		return h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_budget_plans", id, patch, map[string]string{
+			"name": "name", "quarter": "quarter", "owner": "owner",
+		})
+	})
+}
+func (h *API) DeleteBudgetPlan(c *gin.Context) {
+	genericDelete(c, func(ctx *gin.Context, id string) error {
+		return h.Repo.DeleteGenericRow(ctx.Request.Context(), "crm_budget_plans", id)
+	})
+}
+
+func (h *API) GetSEOAuditJob(c *gin.Context) {
+	job, err := h.Repo.GetSEOAuditJob(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		notFound(c)
+		return
+	}
+	c.JSON(http.StatusOK, job)
 }
 
 func (h *API) GetDealForecast(c *gin.Context) {
@@ -348,5 +555,17 @@ func (h *API) GetAccount360(c *gin.Context) {
 		return
 	}
 	deals, _, _ := h.Repo.ListDeals(c.Request.Context(), store.ListOpts{Limit: 10, Search: acct.Name})
-	c.JSON(http.StatusOK, gin.H{"account": acct, "deals": deals})
+	contacts, _, _ := h.Repo.ListContacts(c.Request.Context(), store.ListOpts{Limit: 10, Search: acct.Name})
+	tickets, _, _ := h.Repo.ListTickets(c.Request.Context(), store.ListOpts{Limit: 5})
+	out := gin.H{"account": acct, "deals": deals, "contacts": contacts, "tickets": tickets}
+	customerRef := acct.FinanceCustomerRef
+	if customerRef == "" && acct.Name != "" {
+		customerRef = acct.Name
+	}
+	if h.Finance != nil && h.Finance.Enabled() && customerRef != "" {
+		if stmt, err := h.Finance.CustomerStatement(c.Request.Context(), customerRef); err == nil {
+			out["finance"] = stmt
+		}
+	}
+	c.JSON(http.StatusOK, out)
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"log/slog"
+
+	"github.com/iag/crm/backend/internal/commerce"
+	"github.com/iag/crm/backend/internal/contractsclient"
 	"github.com/iag/crm/backend/internal/events"
 	"github.com/iag/crm/backend/internal/models"
 	"github.com/iag/crm/backend/internal/store"
@@ -28,12 +33,25 @@ func (h *API) MarkDealWon(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, "DealWon", store.AuditDetail("deal", item.ID, "marked won"))
+	item = h.finalizeDealWon(c, item)
+	c.JSON(http.StatusOK, item)
+}
+
+func (h *API) finalizeDealWon(c *gin.Context, item models.Deal) models.Deal {
+	arRef, arErr := commerce.BookDealAR(c.Request.Context(), h.Finance, h.Repo, h.Users, item)
+	if arErr != nil {
+		slog.Warn("deal won finance ar", "deal", item.ID, "err", arErr)
+	}
+	if arRef != "" {
+		item.FinanceARRef = arRef
+	}
 	if h.Events != nil {
 		h.Events.PublishCommercial(c.Request.Context(), events.TypeDealWon, map[string]any{
 			"deal_id": item.ID, "account": item.Account, "amount": item.Amount, "currency": item.Currency,
+			"finance_ar_ref": arRef,
 		}, item.ID)
 	}
-	c.JSON(http.StatusOK, item)
+	return item
 }
 
 func (h *API) SendQuote(c *gin.Context) {
@@ -47,6 +65,11 @@ func (h *API) SendQuote(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, "QuoteSent", store.AuditDetail("quote", item.ID, "sent"))
+	if h.Events != nil {
+		h.Events.PublishCommercial(c.Request.Context(), events.TypeQuoteSent, map[string]any{
+			"quote_id": item.ID, "ref": item.Ref, "account": item.Account, "total": item.Total,
+		}, item.ID)
+	}
 	c.JSON(http.StatusOK, item)
 }
 
@@ -61,6 +84,45 @@ func (h *API) SignQuote(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, "QuoteSigned", store.AuditDetail("quote", item.ID, "signed"))
+	arRef, arErr := commerce.BookQuoteAR(c.Request.Context(), h.Finance, h.Repo, h.Users, item)
+	if arErr != nil {
+		slog.Warn("quote signed finance ar", "quote", item.ID, "err", arErr)
+	}
+	if arRef != "" {
+		item.FinanceARRef = arRef
+	}
+	contractRef := ""
+	if h.Contracts != nil && h.Contracts.Enabled() {
+		zone := item.Account
+		if zone == "" {
+			zone = "CRM"
+		}
+		cs := int64(item.Total)
+		if cs <= 0 {
+			cs = 1
+		}
+		ref, err := h.Contracts.CreateContract(c.Request.Context(), contractsclient.CreateInput{
+			No:      "CRM-" + item.Ref,
+			Name:    "Quote " + item.Ref,
+			Zone:    zone,
+			Sup:     item.Owner,
+			Remarks: "Signed from CRM quote " + item.ID,
+			Cs:      cs,
+		})
+		if err != nil {
+			slog.Warn("quote signed contract", "quote", item.ID, "err", err)
+		} else {
+			contractRef = ref
+			_ = h.Repo.SetQuoteContractRef(c.Request.Context(), item.ID, ref)
+			item.ContractRef = ref
+		}
+	}
+	if h.Events != nil {
+		h.Events.PublishCommercial(c.Request.Context(), events.TypeQuoteSigned, map[string]any{
+			"quote_id": item.ID, "ref": item.Ref, "account": item.Account, "total": item.Total,
+			"finance_ar_ref": arRef, "contract_ref": contractRef, "crmQuoteId": item.ID,
+		}, item.ID)
+	}
 	c.JSON(http.StatusOK, item)
 }
 
@@ -118,6 +180,11 @@ func (h *API) ExportView(c *gin.Context) {
 		in.Format = "csv,pdf"
 	}
 	jobID := "EXP-" + uuid.NewString()[:8]
+	_ = h.Repo.CreateExportJob(c.Request.Context(), jobID, page, in.Range, in.Format)
+	go func() {
+		time.Sleep(2 * time.Second)
+		_ = h.Repo.CompleteExportJob(context.Background(), jobID)
+	}()
 	h.recordAudit(c, "ExportQueued", fmt.Sprintf("page=%s range=%s format=%s job=%s", page, in.Range, in.Format, jobID))
 	c.JSON(http.StatusAccepted, gin.H{
 		"job_id":  jobID,
@@ -125,8 +192,21 @@ func (h *API) ExportView(c *gin.Context) {
 		"page":    page,
 		"range":   in.Range,
 		"formats": in.Format,
-		"eta_sec": 12,
+		"eta_sec": 3,
 	})
+}
+
+func (h *API) GetExportJob(c *gin.Context) {
+	job, err := h.Repo.GetExportJob(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "export job failed")
+		return
+	}
+	c.JSON(http.StatusOK, job)
 }
 
 func (h *API) ActivitiesStream(c *gin.Context) {

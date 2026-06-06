@@ -28,6 +28,9 @@ func isPublicPath(path string) bool {
 	case "/v1/health", "/v1/health/live", "/v1/health/ready":
 		return true
 	default:
+		if strings.HasPrefix(path, "/v1/integrations/oauth/") && strings.HasSuffix(path, "/callback") {
+			return true
+		}
 		return false
 	}
 }

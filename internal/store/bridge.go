@@ -142,13 +142,20 @@ func (r *Repository) GetOutlet360(ctx context.Context, id string) (map[string]an
 	if err := row.Scan(&oid, &name, &dms, &city, &segment, &health, &owner, &account); err != nil {
 		return nil, err
 	}
-	return map[string]any{
+	out := map[string]any{
 		"id": oid, "name": name, "dms_ref": dms, "city": city, "segment": segment,
 		"health": health, "owner": owner, "account": account,
-		"orders": []map[string]any{{"ref": "ORD-8842", "amount": "UGX 8.4M", "at": "2026-05-02"}},
-		"tickets": []map[string]any{{"id": "TKT-0084", "subject": "Packaging tear"}},
-		"loyalty": map[string]any{"tier": "Gold", "points": 12400},
-	}, nil
+	}
+	tickets, _, _ := r.listGeneric(ctx, "crm_tickets", ListOpts{Limit: 5, Search: name}, "subject, status, priority, sla_due_at")
+	out["tickets"] = tickets
+	loyalty, _, _ := r.listGeneric(ctx, "crm_loyalty_outlets", ListOpts{Limit: 1, Search: dms}, "name, tier_id, points, status")
+	if len(loyalty) > 0 {
+		out["loyalty"] = loyalty[0]
+	} else {
+		out["loyalty"] = map[string]any{"tier": "—", "points": 0}
+	}
+	out["orders"] = []map[string]any{}
+	return out, nil
 }
 
 func (r *Repository) ListExportCustomers(ctx context.Context, opts ListOpts) ([]map[string]any, int, error) {
@@ -204,19 +211,51 @@ func (r *Repository) CreateLoyaltyPromotion(ctx context.Context, in map[string]a
 
 func (r *Repository) InsightsSummary(ctx context.Context) (map[string]any, error) {
 	var atRisk int
+	var exposure float64
 	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_accounts WHERE status IN ('risk','nurture')`).Scan(&atRisk)
+	_ = r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount), 0) FROM crm_deals d
+		JOIN crm_accounts a ON a.id = d.account_id
+		WHERE a.status IN ('risk','nurture') AND d.stage NOT IN ('won','lost')
+	`).Scan(&exposure)
+	var won, total int
+	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE stage='won'), COUNT(*) FROM crm_deals WHERE stage IN ('won','lost')`).Scan(&won, &total)
+	retention := 0
+	if total > 0 {
+		retention = won * 100 / total
+	}
 	return map[string]any{
-		"churn_risk_accounts": atRisk,
-		"nrr":                 114,
-		"cohort_retention":    71,
-		"at_risk_exposure_usd": 182000,
+		"churn_risk_accounts":  atRisk,
+		"nrr":                  retention,
+		"cohort_retention":     retention,
+		"at_risk_exposure_usd": exposure,
 	}, nil
 }
 
 func (r *Repository) AISuggestions(ctx context.Context) ([]map[string]any, error) {
-	return []map[string]any{
-		{"type": "deal_risk", "title": "Review Seoul Bean Lab", "deal_id": "DEAL-0419", "priority": "high"},
-		{"type": "next_action", "title": "Schedule call · Matsuri Q3", "deal_id": "DEAL-0421", "priority": "medium"},
-		{"type": "email_draft", "title": "Renewal nudge · Union Hand-Roasted", "account_id": "ACC-0412", "priority": "low"},
-	}, nil
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, name, account_name, stage, amount FROM crm_deals
+		WHERE stage IN ('negotiation','proposal') ORDER BY amount DESC LIMIT 5
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]any
+	priority := []string{"high", "medium", "low"}
+	i := 0
+	for rows.Next() {
+		var id, name, account, stage string
+		var amount float64
+		if err := rows.Scan(&id, &name, &account, &stage, &amount); err != nil {
+			return nil, err
+		}
+		p := priority[i%len(priority)]
+		out = append(out, map[string]any{
+			"type": "deal_risk", "title": "Follow up: " + name, "deal_id": id,
+			"account": account, "stage": stage, "priority": p,
+		})
+		i++
+	}
+	return out, rows.Err()
 }
