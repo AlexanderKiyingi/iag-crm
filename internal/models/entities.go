@@ -28,24 +28,27 @@ var DealStages = []string{
 }
 
 type Account struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Type         string    `json:"type"`
-	Country      string    `json:"country"`
-	Segment      string    `json:"segment"`
-	Owner        string    `json:"owner"`
-	Value        string    `json:"value"`
-	Health       int       `json:"health"`
-	Status       string    `json:"status"`
-	Bridged      bool      `json:"bridged"`
-	LastTouch    string    `json:"last_touch"`
-	Email        string    `json:"email,omitempty"`
-	Phone        string    `json:"phone,omitempty"`
-	Address      string    `json:"address,omitempty"`
-	DmsRef       string    `json:"dms_ref,omitempty"`
-	LastTouchAt  time.Time `json:"last_touch_at"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                 string    `json:"id"`
+	Name               string    `json:"name"`
+	Type               string    `json:"type"`
+	Country            string    `json:"country"`
+	Segment            string    `json:"segment"`
+	Owner              string    `json:"owner"`
+	Value              string    `json:"value"`
+	Health             int       `json:"health"`
+	Status             string    `json:"status"`
+	Bridged            bool      `json:"bridged"`
+	LastTouch          string    `json:"last_touch"`
+	Email              string    `json:"email,omitempty"`
+	Phone              string    `json:"phone,omitempty"`
+	Address            string    `json:"address,omitempty"`
+	DmsRef             string    `json:"dms_ref,omitempty"`
+	BillingOrgID       string    `json:"billing_org_id,omitempty"`
+	BillingIdentityID  string    `json:"billing_identity_id,omitempty"`
+	FinanceCustomerRef string    `json:"finance_customer_ref,omitempty"`
+	LastTouchAt        time.Time `json:"last_touch_at"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type Contact struct {
@@ -96,6 +99,7 @@ type Deal struct {
 	DmsLinked     bool       `json:"dms_linked"`
 	CloseDate     *time.Time `json:"close_date,omitempty"`
 	Notes         string     `json:"notes,omitempty"`
+	FinanceARRef  string     `json:"finance_ar_ref,omitempty"`
 	AgeDays       int        `json:"age_days,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
@@ -122,10 +126,12 @@ type Quote struct {
 	Total        float64         `json:"total"`
 	Status       string          `json:"status"`
 	Version      int             `json:"version"`
-	Owner        string          `json:"owner"`
-	LineItems    []QuoteLineItem `json:"line_items"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	Owner         string          `json:"owner"`
+	LineItems     []QuoteLineItem `json:"line_items"`
+	FinanceARRef  string          `json:"finance_ar_ref,omitempty"`
+	ContractRef   string          `json:"contract_ref,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
 }
 
 type Activity struct {

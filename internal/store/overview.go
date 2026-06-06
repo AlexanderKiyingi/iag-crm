@@ -71,13 +71,5 @@ func BootstrapPayload() models.Bootstrap {
 }
 
 func (r *Repository) BridgeStatus(ctx context.Context) map[string]any {
-	var bridged int
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_accounts WHERE dms_bridged = TRUE`).Scan(&bridged)
-	return map[string]any{
-		"connected":       true,
-		"streams":         6,
-		"accounts_bridged": bridged,
-		"last_sync_at":    "just now",
-		"pending_imports": 14,
-	}
+	return r.LiveBridgeStatus(ctx)
 }

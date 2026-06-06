@@ -241,6 +241,25 @@ func seedMarketingBridge(ctx context.Context, pool *pgxpool.Pool) error {
 		('JRN-001','Welcome → first cupping','CRM · new contact','Welcome → first cupping','Sample request in 30d','active',428,18.4,NOW(),NOW()),
 		('JRN-002','HoReCa onboarding','DMS · new outlet','HoReCa onboarding','First order in 14d','active',96,24.1,NOW(),NOW())
 	`)
+	if err := EnsureJourneySteps(ctx, pool); err != nil {
+		return err
+	}
+	_, _ = pool.Exec(ctx, `
+		INSERT INTO crm_email_sends (id, subject, template, body, status, created_at, updated_at) VALUES
+		('EML-001','Origin story Q2','Welcome','Body','sent',NOW(),NOW()),
+		('EML-002','Sample follow-up','Follow-up','Body','queued',NOW(),NOW())
+		ON CONFLICT (id) DO NOTHING
+	`)
+	_, _ = pool.Exec(ctx, `
+		INSERT INTO crm_social_posts (id, platforms, content, status, created_at, updated_at) VALUES
+		('SOC-001','LinkedIn','Q2 origin tour','draft',NOW(),NOW())
+		ON CONFLICT (id) DO NOTHING
+	`)
+	_, _ = pool.Exec(ctx, `
+		INSERT INTO crm_budget_plans (id, name, quarter, owner, channels, mql_target, sql_target, won_target, created_at, updated_at) VALUES
+		('BDG-001','Q2 demand gen','Q2','marketing','{"email":12000,"events":18000,"social":6000}',200,80,500000,NOW(),NOW())
+		ON CONFLICT (id) DO NOTHING
+	`)
 	_, _ = pool.Exec(ctx, `
 		INSERT INTO crm_personas (id, name, buyer_role, region, seniority, content_tags, story, created_at, updated_at) VALUES
 		('PSN-001','Yuki · Tokyo specialty buyer','Decision-maker','APAC','Director','specialty,micro-lot','Mid-30s Q-grader sourcing for 12-shop chain.',NOW(),NOW()),

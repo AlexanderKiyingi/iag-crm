@@ -1,14 +1,19 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/iag/crm/backend/internal/auth"
+	"github.com/iag/crm/backend/internal/bridge"
+	"github.com/iag/crm/backend/internal/events"
 	"github.com/iag/crm/backend/internal/middleware"
 	"github.com/iag/crm/backend/internal/models"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
@@ -149,15 +154,23 @@ func (h *API) AdminMonitoringBridge(c *gin.Context) {
 }
 
 func (h *API) AdminBridgeSync(c *gin.Context) {
-	_ = h.Repo.AppendBridgeSyncLog(c.Request.Context(), "Admin-triggered DMS bridge sync")
 	h.recordAudit(c, "BridgeSync", "Admin POST /admin/bridge/sync")
+	var res bridge.Result
+	var err error
+	if h.Bridge != nil {
+		res, err = h.Bridge.Sync(c.Request.Context())
+	}
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadGateway, "dms sync failed")
+		return
+	}
 	if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), "crm.bridge.synced", map[string]any{
-			"trigger": "admin",
-			"user":    auth.ActorName(c),
+		h.Events.PublishCommercial(c.Request.Context(), events.TypeBridgeSynced, map[string]any{
+			"trigger": "admin", "user": auth.ActorName(c),
+			"outlets_fetched": res.OutletsFetched, "outlets_upserted": res.OutletsUpserted,
 		}, "bridge")
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "connected", "synced_at": "now", "events": 3})
+	c.JSON(http.StatusOK, res)
 }
 
 func (h *API) PlatformStatus(c *gin.Context) {
@@ -210,6 +223,22 @@ func (h *API) PutLoyaltyTierRules(c *gin.Context) {
 }
 
 func (h *API) PostSEOAudit(c *gin.Context) {
-	h.recordAudit(c, "SEOAudit", "Triggered SEO site audit crawl")
-	c.JSON(http.StatusAccepted, gin.H{"status": "running", "pages": 142, "eta_seconds": 90})
+	var in struct {
+		URL string `json:"url"`
+	}
+	_ = c.ShouldBindJSON(&in)
+	if in.URL == "" {
+		in.URL = "https://iag.example.com"
+	}
+	jobID := "SEO-" + uuid.NewString()[:8]
+	_ = h.Repo.CreateSEOAuditJob(c.Request.Context(), jobID, in.URL)
+	go func() {
+		time.Sleep(2 * time.Second)
+		_ = h.Repo.CompleteSEOAuditJob(context.Background(), jobID, 82, []map[string]any{
+			{"type": "meta", "message": "Title length OK"},
+			{"type": "performance", "message": "LCP under 2.5s"},
+		})
+	}()
+	h.recordAudit(c, "SEOAudit", "Triggered SEO audit for "+in.URL)
+	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "status": "running", "url": in.URL, "eta_seconds": 3})
 }

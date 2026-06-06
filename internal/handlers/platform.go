@@ -7,18 +7,30 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/crm/backend/internal/auth"
+	"github.com/iag/crm/backend/internal/bridge"
 	"github.com/iag/crm/backend/internal/config"
+	"github.com/iag/crm/backend/internal/contractsclient"
+	"github.com/iag/crm/backend/internal/dmsclient"
 	"github.com/iag/crm/backend/internal/events"
+	"github.com/iag/crm/backend/internal/financeclient"
+	"github.com/iag/crm/backend/internal/integrations"
 	"github.com/iag/crm/backend/internal/middleware"
 	"github.com/iag/crm/backend/internal/models"
 	"github.com/iag/crm/backend/internal/store"
+	"github.com/iag/crm/backend/internal/usersclient"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type API struct {
-	Repo   *store.Repository
-	Cfg    config.Config
-	Events *events.Bus
+	Repo      *store.Repository
+	Cfg       config.Config
+	Events    *events.Bus
+	Finance   *financeclient.Client
+	Users     *usersclient.Client
+	DMS       *dmsclient.Client
+	Contracts *contractsclient.Client
+	Bridge        *bridge.Service
+	Integrations  *integrations.Service
 }
 
 func listOpts(c *gin.Context) store.ListOpts {
@@ -74,12 +86,34 @@ func (h *API) Ready(c *gin.Context) {
 }
 
 func (h *API) Notifications(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"data": store.Notifications()})
+	items, err := h.Repo.LiveNotifications(c.Request.Context(), 9)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"data": store.Notifications()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items})
+}
+
+func (h *API) Search(c *gin.Context) {
+	q := c.Query("q")
+	if q == "" {
+		badRequest(c, "q is required")
+		return
+	}
+	items, err := h.Repo.GlobalSearch(c.Request.Context(), q, 25)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "search failed")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items})
 }
 
 func (h *API) Overview(c *gin.Context) {
 	rangeKey := c.DefaultQuery("range", "week")
-	metrics := store.OverviewMetrics(rangeKey)
+	metrics, err := h.Repo.ComputeOverviewMetrics(c.Request.Context(), rangeKey)
+	if err != nil {
+		metrics = store.OverviewMetrics(rangeKey)
+	}
 	summary, err := h.Repo.PipelineSummary(c.Request.Context())
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "overview failed")
@@ -107,17 +141,27 @@ func (h *API) BridgeStatus(c *gin.Context) {
 }
 
 func (h *API) Sync(c *gin.Context) {
-	_ = h.Repo.AppendBridgeSyncLog(c.Request.Context(), "Manual bridge sync triggered")
 	h.recordAudit(c, "BridgeSync", "POST /bridge/sync")
+	var res bridge.Result
+	var err error
+	if h.Bridge != nil {
+		res, err = h.Bridge.Sync(c.Request.Context())
+	} else {
+		_ = h.Repo.AppendBridgeSyncLog(c.Request.Context(), "Bridge service not configured")
+		res.Status = "unconfigured"
+	}
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadGateway, "dms sync failed")
+		return
+	}
 	if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), "crm.bridge.synced", map[string]any{
-			"trigger": "user",
-			"user":    auth.ActorName(c),
+		h.Events.PublishCommercial(c.Request.Context(), events.TypeBridgeSynced, map[string]any{
+			"trigger":          "user",
+			"user":             auth.ActorName(c),
+			"outlets_fetched":  res.OutletsFetched,
+			"outlets_upserted": res.OutletsUpserted,
+			"pending_created":  res.PendingCreated,
 		}, "bridge")
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"synced_at": "now",
-		"events":    3,
-		"status":    "connected",
-	})
+	c.JSON(http.StatusOK, res)
 }

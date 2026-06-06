@@ -13,11 +13,16 @@ import (
 )
 
 type Repository struct {
-	pool *pgxpool.Pool
+	pool     *pgxpool.Pool
+	tokenKey []byte
 }
 
-func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+func New(pool *pgxpool.Pool, opts ...Option) *Repository {
+	r := &Repository{pool: pool}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 func (r *Repository) Ping(ctx context.Context) error {
@@ -81,11 +86,23 @@ func scanAccount(row pgx.Row) (models.Account, error) {
 	var a models.Account
 	var amount *float64
 	var currency *string
+	var billingOrg, billingID, financeRef *string
 	err := row.Scan(
 		&a.ID, &a.Name, &a.Type, &a.Country, &a.Segment, &a.Owner,
 		&a.Value, &amount, &currency, &a.Health, &a.Status, &a.Bridged,
-		&a.DmsRef, &a.Email, &a.Phone, &a.Address, &a.LastTouchAt, &a.CreatedAt, &a.UpdatedAt,
+		&a.DmsRef, &a.Email, &a.Phone, &a.Address,
+		&billingOrg, &billingID, &financeRef,
+		&a.LastTouchAt, &a.CreatedAt, &a.UpdatedAt,
 	)
+	if billingOrg != nil {
+		a.BillingOrgID = *billingOrg
+	}
+	if billingID != nil {
+		a.BillingIdentityID = *billingID
+	}
+	if financeRef != nil {
+		a.FinanceCustomerRef = *financeRef
+	}
 	if err != nil {
 		return a, err
 	}
@@ -125,6 +142,7 @@ func (r *Repository) ListAccounts(ctx context.Context, opts ListOpts) ([]models.
 		SELECT id, name, account_type, country, segment, owner, value_display,
 		       value_amount, value_currency, health_score, status, dms_bridged,
 		       COALESCE(dms_ref, ''), COALESCE(email, ''), COALESCE(phone, ''), COALESCE(address, ''),
+		       billing_org_id, billing_identity_id, finance_customer_ref,
 		       last_touch_at, created_at, updated_at
 		FROM crm_accounts
 		WHERE `+whereSQL+`
@@ -151,6 +169,7 @@ func (r *Repository) GetAccount(ctx context.Context, id string) (models.Account,
 		SELECT id, name, account_type, country, segment, owner, value_display,
 		       value_amount, value_currency, health_score, status, dms_bridged,
 		       COALESCE(dms_ref, ''), COALESCE(email, ''), COALESCE(phone, ''), COALESCE(address, ''),
+		       billing_org_id, billing_identity_id, finance_customer_ref,
 		       last_touch_at, created_at, updated_at
 		FROM crm_accounts WHERE id = $1
 	`, id)
@@ -170,9 +189,12 @@ type AccountInput struct {
 	Email     string  `json:"email"`
 	Phone     string  `json:"phone"`
 	Address   string  `json:"address"`
-	DmsRef    string  `json:"dms_ref"`
-	Amount    float64 `json:"amount"`
-	Currency  string  `json:"currency"`
+	DmsRef             string  `json:"dms_ref"`
+	BillingOrgID       string  `json:"billing_org_id"`
+	BillingIdentityID  string  `json:"billing_identity_id"`
+	FinanceCustomerRef string  `json:"finance_customer_ref"`
+	Amount             float64 `json:"amount"`
+	Currency           string  `json:"currency"`
 }
 
 func (r *Repository) CreateAccount(ctx context.Context, in AccountInput) (models.Account, error) {
@@ -191,11 +213,13 @@ func (r *Repository) CreateAccount(ctx context.Context, in AccountInput) (models
 		INSERT INTO crm_accounts (
 			id, name, account_type, country, segment, owner, value_display,
 			value_amount, value_currency, health_score, status, dms_bridged,
-			dms_ref, email, phone, address, last_touch_at, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$17)
+			dms_ref, email, phone, address, billing_org_id, billing_identity_id, finance_customer_ref,
+			last_touch_at, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$20,$20)
 	`, id, in.Name, in.Type, in.Country, in.Segment, in.Owner, in.Value,
 		nullFloat(in.Amount), nullStr(in.Currency), in.Health, in.Status, in.Bridged,
-		nullStr(in.DmsRef), in.Email, in.Phone, in.Address, now)
+		nullStr(in.DmsRef), in.Email, in.Phone, in.Address,
+		nullStr(in.BillingOrgID), nullStr(in.BillingIdentityID), nullStr(in.FinanceCustomerRef), now)
 	if err != nil {
 		return models.Account{}, err
 	}
@@ -237,6 +261,15 @@ func (r *Repository) PatchAccount(ctx context.Context, id string, patch map[stri
 	}
 	if v, ok := patch["bridged"].(bool); ok {
 		add("dms_bridged", v)
+	}
+	if v, ok := patch["billing_org_id"].(string); ok {
+		add("billing_org_id", v)
+	}
+	if v, ok := patch["billing_identity_id"].(string); ok {
+		add("billing_identity_id", v)
+	}
+	if v, ok := patch["finance_customer_ref"].(string); ok {
+		add("finance_customer_ref", v)
 	}
 	if len(sets) == 1 {
 		return r.GetAccount(ctx, id)

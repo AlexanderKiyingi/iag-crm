@@ -75,10 +75,13 @@ Compose (`deploy/docker-compose.yml`) uses the same Dockerfile. Gateway waits fo
 
 ### Production checklist
 
-- `ENVIRONMENT=production`, `AUTH_MODE=jwt`
+- `ENVIRONMENT=production` (enables strict RBAC — tokens must carry `permissions`)
 - `SEED_ON_EMPTY=false`, `SERVICE_CLIENT_SECRET` (min 16 chars)
+- `CONSUMER_ENABLED=true`, `EVENT_BUS_ENABLED=true`, upstream URLs (`FINANCE_API_URL`, `DMS_API_URL`, …)
+- `JOURNEY_RUNNER_INTERVAL=30s` for journey step execution
+- `GOOGLE_OAUTH_*` / `MICROSOFT_OAUTH_*` for email + calendar sync
 - Explicit `ALLOWED_ORIGINS` (not `*`)
-- See [`config/.env.production.example`](config/.env.production.example)
+- See [`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md) and [`config/.env.production.example`](config/.env.production.example)
 
 ### Smoke test
 
@@ -88,4 +91,4 @@ CRM_SMOKE_TOKEN=<jwt> sh services/commercial/crm/scripts/smoke_test.sh
 
 ## Environment
 
-See [`.env.example`](.env.example). Production requires `AUTH_MODE=jwt`, `ALLOWED_ORIGINS`, and `SERVICE_CLIENT_SECRET`.
+See [`.env.example`](.env.example). Every request requires a Bearer JWT with `aud=iag.crm`. Production also requires `ALLOWED_ORIGINS` and `SERVICE_CLIENT_SECRET`.

@@ -18,17 +18,27 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	crmDB "github.com/iag/crm/backend/db"
+	"github.com/iag/crm/backend/internal/auth"
+	"github.com/iag/crm/backend/internal/bridge"
+	crmconsumer "github.com/iag/crm/backend/internal/consumer"
 	"github.com/iag/crm/backend/internal/config"
+	"github.com/iag/crm/backend/internal/contractsclient"
 	"github.com/iag/crm/backend/internal/db"
+	"github.com/iag/crm/backend/internal/dmsclient"
 	"github.com/iag/crm/backend/internal/events"
+	"github.com/iag/crm/backend/internal/financeclient"
 	"github.com/iag/crm/backend/internal/handlers"
+	"github.com/iag/crm/backend/internal/integrations"
+	journeyrunner "github.com/iag/crm/backend/internal/journey"
 	"github.com/iag/crm/backend/internal/migrate"
 	"github.com/iag/crm/backend/internal/middleware"
 	"github.com/iag/crm/backend/internal/models"
+	"github.com/iag/crm/backend/internal/outbox"
 	"github.com/iag/crm/backend/internal/platformauth"
 	"github.com/iag/crm/backend/internal/router"
 	"github.com/iag/crm/backend/internal/seed"
 	"github.com/iag/crm/backend/internal/store"
+	"github.com/iag/crm/backend/internal/usersclient"
 )
 
 //go:embed index.html
@@ -42,6 +52,7 @@ func main() {
 		slog.Error("config", "err", err)
 		os.Exit(1)
 	}
+	auth.SetStrictRBAC(cfg.IsProduction())
 
 	connectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	pool, err := db.Connect(connectCtx, cfg.DatabaseURL)
@@ -57,6 +68,10 @@ func main() {
 			slog.Error("auto-migrate", "err", err)
 			os.Exit(1)
 		}
+	}
+	if err := seed.EnsureJourneySteps(context.Background(), pool); err != nil {
+		slog.Error("journey steps", "err", err)
+		os.Exit(1)
 	}
 
 	if cfg.SeedOnEmpty {
@@ -84,11 +99,89 @@ func main() {
 	}
 
 	platformAuth := middleware.NewPlatformAuth(verifier)
-	repo := store.New(pool)
-	eventBus := events.NewFromEnv()
-	defer eventBus.Close()
+	repo := store.New(pool, store.WithIntegrationTokenSecret(cfg.IntegrationTokenSecret))
 
-	api := &handlers.API{Repo: repo, Cfg: cfg, Events: eventBus}
+	eventBus := events.New(events.Config{
+		Brokers: cfg.KafkaBrokers,
+		Enabled: cfg.EventBusEnabled,
+	})
+	defer eventBus.Close()
+	if eventBus.Enabled() {
+		slog.Info("event bus enabled", "brokers", cfg.KafkaBrokers)
+	}
+
+	outboxStore := outbox.NewStore(pool)
+	eventBus.SetOutbox(outboxStore)
+	if eventBus.Enabled() {
+		outboxPublisher := outbox.NewPublisher(outboxStore, outboxDispatcher{bus: eventBus})
+		go outboxPublisher.Run(ctx)
+		slog.Info("outbox publisher started")
+	}
+
+	saCfg := struct {
+		TokenURL, ClientID, Secret string
+	}{
+		TokenURL: cfg.AuthTokenURL,
+		ClientID: cfg.ServiceClientID,
+		Secret:   cfg.ServiceClientSecret,
+	}
+	financeClient := financeclient.New(financeclient.Config{
+		BaseURL: cfg.FinanceAPIURL, TokenURL: saCfg.TokenURL,
+		ServiceClientID: saCfg.ClientID, ServiceSecret: saCfg.Secret,
+	})
+	usersClient := usersclient.New(usersclient.Config{
+		BaseURL: cfg.UsersAPIURL, TokenURL: saCfg.TokenURL,
+		ServiceClientID: saCfg.ClientID, ServiceSecret: saCfg.Secret,
+	})
+	dmsClient := dmsclient.New(dmsclient.Config{
+		BaseURL: cfg.DMSAPIURL, TokenURL: saCfg.TokenURL,
+		ServiceClientID: saCfg.ClientID, ServiceSecret: saCfg.Secret,
+	})
+	contractsClient := contractsclient.New(contractsclient.Config{
+		BaseURL: cfg.ContractsAPIURL, TokenURL: saCfg.TokenURL,
+		ServiceClientID: saCfg.ClientID, ServiceSecret: saCfg.Secret,
+	})
+	bridgeSvc := &bridge.Service{Repo: repo, DMS: dmsClient}
+	integrationsSvc := integrations.New(repo, integrations.Config{
+		GoogleRedirectURL:       cfg.GoogleOAuthRedirectURL,
+		MicrosoftRedirectURL:    cfg.MicrosoftOAuthRedirectURL,
+		StateSecret:             cfg.IntegrationTokenSecret,
+		RequireSignedState:      cfg.IsProduction(),
+	})
+	journeyRunner := &journeyrunner.Runner{
+		Repo: repo, Events: eventBus, Tick: cfg.JourneyRunnerInterval,
+	}
+	go journeyRunner.Run(ctx)
+	slog.Info("journey runner started", "interval", cfg.JourneyRunnerInterval)
+
+	if cfg.ConsumerEnabled && len(cfg.KafkaBrokers) > 0 {
+		consumer, closeDLQ, err := crmconsumer.New(crmconsumer.Options{
+			Brokers:  cfg.KafkaBrokers,
+			GroupID:  cfg.ConsumerGroupID,
+			DLQTopic: cfg.ConsumerDLQTopic,
+			Pool:     pool,
+			Handler:  &crmconsumer.Handler{Repo: repo},
+		})
+		if err != nil {
+			slog.Error("consumer init", "err", err)
+			os.Exit(1)
+		}
+		defer closeDLQ()
+		defer func() { _ = consumer.Close() }()
+		go func() {
+			if err := crmconsumer.Run(ctx, consumer); err != nil {
+				slog.Warn("consumer stopped", "err", err)
+			}
+		}()
+		slog.Info("commercial consumer enabled", "group", cfg.ConsumerGroupID)
+	}
+
+	api := &handlers.API{
+		Repo: repo, Cfg: cfg, Events: eventBus,
+		Finance: financeClient, Users: usersClient,
+		DMS: dmsClient, Contracts: contractsClient, Bridge: bridgeSvc,
+		Integrations: integrationsSvc,
+	}
 	engine := router.New(router.Options{
 		Cfg:          cfg,
 		PlatformAuth: platformAuth,
@@ -133,6 +226,17 @@ func main() {
 	defer cancelShutdown()
 	_ = srv.Shutdown(shutdownCtx)
 	cancelApp()
+}
+
+type outboxDispatcher struct {
+	bus *events.Bus
+}
+
+func (d outboxDispatcher) DispatchOutbox(ctx context.Context, row outbox.Row) error {
+	if d.bus == nil {
+		return nil
+	}
+	return d.bus.DispatchOutbox(ctx, row.EventType, row.EventKey, row.Payload)
 }
 
 func configureLogger() {

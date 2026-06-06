@@ -12,6 +12,13 @@ import (
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
+var strictRBAC bool
+
+// SetStrictRBAC enables fail-closed permission checks when JWT lacks permissions.
+func SetStrictRBAC(strict bool) {
+	strictRBAC = strict
+}
+
 func HasPerm(c *gin.Context, codename string) bool {
 	claims, ok := middleware.Claims(c)
 	if !ok || claims == nil {
@@ -25,7 +32,10 @@ func HasPerm(c *gin.Context, codename string) bool {
 	}
 	perms := claims.Permissions
 	if len(perms) == 0 {
-		// Dev tokens without explicit permissions — allow (service enforces RBAC via bootstrap).
+		if strictRBAC {
+			return false
+		}
+		// Dev tokens without explicit permissions — allow when not in strict mode.
 		return true
 	}
 	for _, p := range perms {

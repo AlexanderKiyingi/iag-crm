@@ -207,10 +207,14 @@ func (r *Repository) ListEmailSends(ctx context.Context, opts ListOpts) ([]map[s
 
 func (r *Repository) CreateEmailSend(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "EML", 100)
+	status := str(in, "status")
+	if status == "" {
+		status = "draft"
+	}
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO crm_email_sends (id, subject, template, body, status, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,'draft',NOW(),NOW())
-	`, id, str(in, "subject"), str(in, "template"), str(in, "body"))
+		VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+	`, id, str(in, "subject"), str(in, "template"), str(in, "body"), status)
 	if err != nil {
 		return nil, err
 	}
@@ -292,20 +296,111 @@ func (r *Repository) GetBrandKit(ctx context.Context) (map[string]any, error) {
 }
 
 func (r *Repository) MarketingHubSummary(ctx context.Context) (map[string]any, error) {
+	var campaigns, mqls, assets, events int
+	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_campaigns WHERE status = 'live'`).Scan(&campaigns)
+	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_mqls`).Scan(&mqls)
+	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_content_assets`).Scan(&assets)
+	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_events WHERE status IN ('planned','live')`).Scan(&events)
+
+	var plannedBudget, campaignSpend, eventSpend float64
+	_ = r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(
+			COALESCE((channels->>'email')::numeric, 0) +
+			COALESCE((channels->>'events')::numeric, 0) +
+			COALESCE((channels->>'social')::numeric, 0) +
+			COALESCE((channels->>'web')::numeric, 0)
+		), 0)
+		FROM crm_budget_plans
+	`).Scan(&plannedBudget)
+	_ = r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(budget_usd), 0) FROM crm_campaigns
+		WHERE status = 'live' AND budget_usd IS NOT NULL
+	`).Scan(&campaignSpend)
+	_ = r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(budget_usd), 0) FROM crm_events
+		WHERE status IN ('planned','live') AND budget_usd IS NOT NULL
+	`).Scan(&eventSpend)
+
 	return map[string]any{
-		"campaigns_live": 3, "mqls_this_month": 142, "content_assets": 28,
-		"budget_burn_pct": 68, "upcoming_events": 2,
+		"campaigns_live": campaigns, "mqls_this_month": mqls, "content_assets": assets,
+		"budget_burn_pct": budgetBurnPct(plannedBudget, campaignSpend+eventSpend),
+		"upcoming_events": events,
 	}, nil
 }
 
 func (r *Repository) DemandGenMetrics(ctx context.Context) (map[string]any, error) {
-	return map[string]any{
-		"channels": []map[string]any{
-			{"name": "Email", "cpl": 42, "mqls": 86},
-			{"name": "Trade shows", "cpl": 118, "mqls": 54},
-			{"name": "LinkedIn", "cpl": 64, "mqls": 32},
-		},
-	}, nil
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			CASE
+				WHEN LOWER(source) LIKE '%email%' THEN 'Email'
+				WHEN LOWER(source) LIKE '%trade%' OR LOWER(source) LIKE '%show%' OR LOWER(source) LIKE '%event%' THEN 'Trade shows'
+				WHEN LOWER(source) LIKE '%linkedin%' OR LOWER(source) LIKE '%social%' THEN 'LinkedIn'
+				WHEN LOWER(source) LIKE '%web%' OR LOWER(source) LIKE '%seo%' THEN 'Web'
+				ELSE 'Other'
+			END AS channel,
+			COUNT(*)::int AS mqls
+		FROM crm_mqls
+		GROUP BY 1
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var ch string
+		var mqls int
+		if err := rows.Scan(&ch, &mqls); err != nil {
+			return nil, err
+		}
+		counts[ch] = mqls
+	}
+	var emailSends, socialPosts, events int
+	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_email_sends WHERE status IN ('sent','queued')`).Scan(&emailSends)
+	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_social_posts WHERE LOWER(platforms) LIKE '%linkedin%'`).Scan(&socialPosts)
+	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_events WHERE event_type ILIKE '%trade%'`).Scan(&events)
+
+	var budgetSpend float64
+	_ = r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(
+			COALESCE((channels->>'email')::numeric, 0) +
+			COALESCE((channels->>'events')::numeric, 0) +
+			COALESCE((channels->>'social')::numeric, 0)
+		), 0)
+		FROM crm_budget_plans
+	`).Scan(&budgetSpend)
+
+	channels := []map[string]any{}
+	add := func(name string, mqls int, weight float64) {
+		if mqls <= 0 {
+			return
+		}
+		cpl := 0.0
+		if budgetSpend > 0 && weight > 0 {
+			cpl = (budgetSpend * weight) / float64(mqls)
+		}
+		channels = append(channels, map[string]any{"name": name, "cpl": int(cpl), "mqls": mqls})
+	}
+	emailMQLs := counts["Email"]
+	if emailMQLs == 0 && emailSends > 0 {
+		emailMQLs = emailSends
+	}
+	add("Email", emailMQLs, 0.35)
+	tradeMQLs := counts["Trade shows"]
+	if tradeMQLs == 0 && events > 0 {
+		tradeMQLs = events
+	}
+	add("Trade shows", tradeMQLs, 0.4)
+	linkedInMQLs := counts["LinkedIn"]
+	if linkedInMQLs == 0 && socialPosts > 0 {
+		linkedInMQLs = socialPosts
+	}
+	add("LinkedIn", linkedInMQLs, 0.15)
+	add("Web", counts["Web"], 0.1)
+	if len(channels) == 0 {
+		channels = []map[string]any{{"name": "Email", "cpl": 0, "mqls": 0}}
+	}
+	return map[string]any{"channels": channels, "email_sends": emailSends, "social_posts": socialPosts, "events": events}, nil
 }
 
 func str(m map[string]any, k string) string {

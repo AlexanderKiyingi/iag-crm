@@ -17,11 +17,18 @@ func scanQuote(row pgx.Row) (models.Quote, error) {
 	var accountID, dealID *string
 	var validUntil *time.Time
 	var lineRaw []byte
+	var financeAR, contractRef *string
 	err := row.Scan(
 		&q.ID, &q.Ref, &accountID, &q.Account, &dealID, &q.Template, &q.Currency,
 		&q.Incoterms, &q.PaymentTerms, &validUntil, &q.Total, &q.Status, &q.Version,
-		&q.Owner, &lineRaw, &q.CreatedAt, &q.UpdatedAt,
+		&q.Owner, &lineRaw, &financeAR, &contractRef, &q.CreatedAt, &q.UpdatedAt,
 	)
+	if financeAR != nil {
+		q.FinanceARRef = *financeAR
+	}
+	if contractRef != nil {
+		q.ContractRef = *contractRef
+	}
 	if err != nil {
 		return q, err
 	}
@@ -46,7 +53,7 @@ func (r *Repository) ListQuotes(ctx context.Context, opts ListOpts) ([]models.Qu
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
-		       valid_until, total, status, version, owner, line_items, created_at, updated_at
+		       valid_until, total, status, version, owner, line_items, finance_ar_ref, contract_ref, created_at, updated_at
 		FROM crm_quotes ORDER BY created_at DESC LIMIT $1 OFFSET $2
 	`, opts.Limit, opts.Offset)
 	if err != nil {
@@ -109,7 +116,7 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 	}
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
-		       valid_until, total, status, version, owner, line_items, created_at, updated_at
+		       valid_until, total, status, version, owner, line_items, finance_ar_ref, contract_ref, created_at, updated_at
 		FROM crm_quotes WHERE id = $1
 	`, id)
 	return scanQuote(row)
@@ -118,7 +125,7 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 func (r *Repository) GetQuote(ctx context.Context, id string) (models.Quote, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
-		       valid_until, total, status, version, owner, line_items, created_at, updated_at
+		       valid_until, total, status, version, owner, line_items, finance_ar_ref, contract_ref, created_at, updated_at
 		FROM crm_quotes WHERE id = $1
 	`, id)
 	return scanQuote(row)

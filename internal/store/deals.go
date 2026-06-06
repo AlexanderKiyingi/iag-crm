@@ -15,11 +15,15 @@ func scanDeal(row pgx.Row) (models.Deal, error) {
 	var d models.Deal
 	var accountID *string
 	var closeDate *time.Time
+	var financeAR *string
 	err := row.Scan(
 		&d.ID, &d.Name, &accountID, &d.Account, &d.Stage, &d.Probability, &d.Owner,
 		&d.Currency, &d.Amount, &d.AmountDisplay, &d.Description, &d.Source, &d.DmsLinked,
-		&closeDate, &d.Notes, &d.CreatedAt, &d.UpdatedAt,
+		&closeDate, &d.Notes, &financeAR, &d.CreatedAt, &d.UpdatedAt,
 	)
+	if financeAR != nil {
+		d.FinanceARRef = *financeAR
+	}
 	if err != nil {
 		return d, err
 	}
@@ -70,7 +74,7 @@ func (r *Repository) ListDeals(ctx context.Context, opts ListOpts) ([]models.Dea
 	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, name, account_id, account_name, stage, probability, owner, currency, amount, amount_display,
-		       description, source, dms_linked, close_date, notes, created_at, updated_at
+		       description, source, dms_linked, close_date, notes, finance_ar_ref, created_at, updated_at
 		FROM crm_deals WHERE `+whereSQL+` ORDER BY updated_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
 		return nil, 0, err
@@ -90,7 +94,7 @@ func (r *Repository) ListDeals(ctx context.Context, opts ListOpts) ([]models.Dea
 func (r *Repository) GetDeal(ctx context.Context, id string) (models.Deal, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, name, account_id, account_name, stage, probability, owner, currency, amount, amount_display,
-		       description, source, dms_linked, close_date, notes, created_at, updated_at
+		       description, source, dms_linked, close_date, notes, finance_ar_ref, created_at, updated_at
 		FROM crm_deals WHERE id = $1
 	`, id)
 	return scanDeal(row)

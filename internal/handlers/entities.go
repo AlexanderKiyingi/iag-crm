@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/iag/crm/backend/internal/events"
+	"github.com/iag/crm/backend/internal/journey"
+	"github.com/iag/crm/backend/internal/models"
 	"github.com/iag/crm/backend/internal/store"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
@@ -46,6 +48,11 @@ func (h *API) CreateAccount(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, "AccountCreated", store.AuditDetail("account", item.ID, "created"))
+	if h.Events != nil {
+		h.Events.PublishCommercial(c.Request.Context(), events.TypeAccountCreated, map[string]any{
+			"account_id": item.ID, "name": item.Name, "owner": item.Owner,
+		}, item.ID)
+	}
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -110,6 +117,12 @@ func (h *API) CreateContact(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create contact failed")
 		return
 	}
+	if h.Events != nil {
+		h.Events.PublishCommercial(c.Request.Context(), events.TypeContactCreated, map[string]any{
+			"contact_id": item.ID, "name": item.Name, "account": item.Account,
+		}, item.ID)
+	}
+	_ = journey.AutoEnrollContact(c.Request.Context(), h.Repo, item.ID, item.Email, item.Name)
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -260,7 +273,9 @@ func (h *API) PatchDeal(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, "DealUpdated", store.AuditDetail("deal", item.ID, "updated"))
-	if h.Events != nil {
+	if item.Stage == models.DealStageWon {
+		item = h.finalizeDealWon(c, item)
+	} else if h.Events != nil {
 		h.Events.PublishCommercial(c.Request.Context(), events.TypeDealUpdated, map[string]any{
 			"deal_id": item.ID, "stage": item.Stage,
 		}, item.ID)
@@ -286,7 +301,9 @@ func (h *API) SetDealStage(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, "DealStageChanged", store.AuditDetail("deal", item.ID, "stage="+in.Stage))
-	if h.Events != nil {
+	if item.Stage == models.DealStageWon {
+		item = h.finalizeDealWon(c, item)
+	} else if h.Events != nil {
 		h.Events.PublishCommercial(c.Request.Context(), events.TypeDealUpdated, map[string]any{
 			"deal_id": item.ID, "stage": item.Stage,
 		}, item.ID)
@@ -439,5 +456,100 @@ func (h *API) CreateCampaign(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create campaign failed")
 		return
 	}
+	if h.Events != nil {
+		h.Events.PublishCommercial(c.Request.Context(), events.TypeCampaignLaunched, map[string]any{
+			"campaign_id": item.ID, "name": item.Name,
+		}, item.ID)
+	}
 	c.JSON(http.StatusCreated, item)
+}
+
+func (h *API) DeleteDeal(c *gin.Context) {
+	if err := h.Repo.DeleteDeal(c.Request.Context(), c.Param("id")); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "delete deal failed")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *API) DeleteLead(c *gin.Context) {
+	if err := h.Repo.DeleteLead(c.Request.Context(), c.Param("id")); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "delete lead failed")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *API) DeleteQuote(c *gin.Context) {
+	if err := h.Repo.DeleteQuote(c.Request.Context(), c.Param("id")); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "delete quote failed")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *API) DeleteTicket(c *gin.Context) {
+	if err := h.Repo.DeleteTicket(c.Request.Context(), c.Param("id")); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "delete ticket failed")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *API) DeleteCampaign(c *gin.Context) {
+	if err := h.Repo.DeleteCampaign(c.Request.Context(), c.Param("id")); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "delete campaign failed")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *API) PatchActivity(c *gin.Context) {
+	var patch map[string]any
+	if err := c.ShouldBindJSON(&patch); err != nil {
+		badRequest(c, "invalid body")
+		return
+	}
+	item, err := h.Repo.PatchActivity(c.Request.Context(), c.Param("id"), patch)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "update activity failed")
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
+func (h *API) DeleteActivity(c *gin.Context) {
+	if err := h.Repo.DeleteActivity(c.Request.Context(), c.Param("id")); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "delete activity failed")
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
