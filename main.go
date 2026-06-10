@@ -14,6 +14,7 @@ import (
 
 	_ "embed"
 
+	platformotel "github.com/alvor-technologies/iag-platform-go/otel"
 	platformserviceauth "github.com/alvor-technologies/iag-platform-go/serviceauth"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -54,6 +55,20 @@ func main() {
 		os.Exit(1)
 	}
 	auth.SetStrictRBAC(cfg.IsProduction())
+
+	// OpenTelemetry → otel-collector:4317 (non-blocking dial).
+	if tp, err := platformotel.Init(context.Background(), platformotel.Config{
+		ServiceName: cfg.ServiceName,
+		Environment: cfg.Environment,
+	}); err != nil {
+		slog.Warn("otel disabled", "err", err)
+	} else {
+		defer func() {
+			sc, c := context.WithTimeout(context.Background(), 5*time.Second)
+			defer c()
+			_ = tp.Shutdown(sc)
+		}()
+	}
 
 	connectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	pool, err := db.Connect(connectCtx, cfg.DatabaseURL)
