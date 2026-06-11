@@ -414,6 +414,13 @@ func (h *API) CreateTicket(c *gin.Context) {
 		h.Events.PublishCommercial(c.Request.Context(), events.TypeTicketCreated, map[string]any{
 			"ticket_id": item.ID, "subject": item.Subject,
 		}, item.ID)
+		// Escalate the new ticket to the support desk as a user-visible alert.
+		if recipient := events.DefaultNotifyRecipient(); recipient != "" {
+			h.Events.PublishAlert(c.Request.Context(), "", recipient, "crm.alert", map[string]string{
+				"Title": "New support ticket: " + item.Subject,
+				"Body":  "Ticket " + item.ID + " was created: " + item.Subject,
+			}, "crm-ticket-"+item.ID)
+		}
 	}
 	c.JSON(http.StatusCreated, item)
 }

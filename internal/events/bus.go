@@ -31,6 +31,7 @@ const (
 	TypeCampaignLaunched = "crm.campaign.launched"
 	TypeJourneyEnrolled  = "crm.journey.enrolled"
 	TypeJourneyCompleted = "crm.journey.completed"
+	TypeAlertRaised      = "crm.alert.raised"
 )
 
 type Bus struct {
@@ -189,6 +190,27 @@ func (b *Bus) PublishCommercial(ctx context.Context, eventType string, data map[
 	}
 }
 
+// PublishAlert emits crm.alert.raised for iag-notifications policy consumers,
+// using the shared {channel,recipient,templateId,variables} envelope.
+func (b *Bus) PublishAlert(ctx context.Context, channel, recipient, templateID string, variables map[string]string, key string) {
+	if !b.enabled || recipient == "" || templateID == "" {
+		return
+	}
+	vars := map[string]any{}
+	for k, v := range variables {
+		vars[k] = v
+	}
+	if channel == "" {
+		channel = defaultNotifyChannel()
+	}
+	b.PublishCommercial(ctx, TypeAlertRaised, map[string]any{
+		"channel":    channel,
+		"recipient":  recipient,
+		"templateId": templateID,
+		"variables":  vars,
+	}, key)
+}
+
 func ParseBrokers(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
@@ -198,4 +220,17 @@ func ParseBrokers(raw string) []string {
 		}
 	}
 	return out
+}
+
+func defaultNotifyChannel() string {
+	if ch := strings.TrimSpace(os.Getenv("NOTIFY_CHANNEL")); ch != "" {
+		return ch
+	}
+	return "email"
+}
+
+// DefaultNotifyRecipient is the fallback recipient (e.g. the support/sales
+// desk) used when an alert has no specific user to address.
+func DefaultNotifyRecipient() string {
+	return strings.TrimSpace(os.Getenv("NOTIFY_DEFAULT_RECIPIENT"))
 }
