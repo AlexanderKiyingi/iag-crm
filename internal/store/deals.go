@@ -68,11 +68,11 @@ func (r *Repository) ListDeals(ctx context.Context, opts ListOpts) ([]models.Dea
 	}
 	whereSQL := strings.Join(where, " AND ")
 	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_deals WHERE "+whereSQL, args...).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_deals WHERE "+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	args = append(args, opts.Limit, opts.Offset)
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, name, account_id, account_name, stage, probability, owner, currency, amount, amount_display,
 		       description, source, dms_linked, close_date, notes, finance_ar_ref, created_at, updated_at
 		FROM crm_deals WHERE `+whereSQL+` ORDER BY updated_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
@@ -92,7 +92,7 @@ func (r *Repository) ListDeals(ctx context.Context, opts ListOpts) ([]models.Dea
 }
 
 func (r *Repository) GetDeal(ctx context.Context, id string) (models.Deal, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, name, account_id, account_name, stage, probability, owner, currency, amount, amount_display,
 		       description, source, dms_linked, close_date, notes, finance_ar_ref, created_at, updated_at
 		FROM crm_deals WHERE id = $1
@@ -125,11 +125,11 @@ func (r *Repository) CreateDeal(ctx context.Context, in DealInput) (models.Deal,
 	accountID := in.AccountID
 	accountName := in.Account
 	if accountID == "" && accountName != "" {
-		var aid string
-		err := r.pool.QueryRow(ctx, `SELECT id FROM crm_accounts WHERE name = $1 LIMIT 1`, accountName).Scan(&aid)
-		if err == nil {
-			accountID = aid
+		aid, err := r.resolveAccountID(ctx, accountName)
+		if err != nil {
+			return models.Deal{}, err
 		}
+		accountID = aid
 	}
 	if in.Stage == "" {
 		in.Stage = models.DealStageLead
@@ -144,7 +144,7 @@ func (r *Repository) CreateDeal(ctx context.Context, in DealInput) (models.Deal,
 		in.AmountDisplay = formatAmount(in.Currency, in.Amount)
 	}
 	now := time.Now().UTC()
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_deals (
 			id, name, account_id, account_name, stage, probability, owner, currency, amount, amount_display,
 			description, source, dms_linked, close_date, notes, created_at, updated_at
@@ -205,7 +205,7 @@ func (r *Repository) PatchDeal(ctx context.Context, id string, patch map[string]
 		return r.GetDeal(ctx, id)
 	}
 	args = append(args, id)
-	_, err := r.pool.Exec(ctx, `UPDATE crm_deals SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
+	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_deals SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
 	if err != nil {
 		return models.Deal{}, err
 	}
@@ -221,7 +221,7 @@ func (r *Repository) SetDealStage(ctx context.Context, id, stage string) (models
 	if stage == models.DealStageLost {
 		extra = ", lost_at = NOW()"
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		UPDATE crm_deals SET stage = $2, probability = $3, updated_at = NOW()`+extra+` WHERE id = $1
 	`, id, stage, prob)
 	if err != nil {
@@ -263,7 +263,7 @@ func (r *Repository) PipelineBoard(ctx context.Context, owner string) ([]models.
 }
 
 func (r *Repository) PipelineSummary(ctx context.Context) (map[string]any, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT
 			COUNT(*)::int,
 			COALESCE(SUM(amount * probability / 100.0), 0),
@@ -277,7 +277,7 @@ func (r *Repository) PipelineSummary(ctx context.Context) (map[string]any, error
 		return nil, err
 	}
 	var won, closed int
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE stage = 'won'), COUNT(*) FILTER (WHERE stage IN ('won','lost')) FROM crm_deals`).Scan(&won, &closed)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE stage = 'won'), COUNT(*) FILTER (WHERE stage IN ('won','lost')) FROM crm_deals`).Scan(&won, &closed)
 	winRate := 0.0
 	if closed > 0 {
 		winRate = float64(won) / float64(closed) * 100

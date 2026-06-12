@@ -95,12 +95,16 @@ func (c *Client) CreateContract(ctx context.Context, in CreateInput) (string, er
 	var out struct {
 		No string `json:"no"`
 	}
-	_ = json.Unmarshal(raw, &out)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", fmt.Errorf("contracts create: decode response: %w", err)
+	}
 	if out.No != "" {
 		return out.No, nil
 	}
+	// Server accepted the contract but echoed no number; fall back to the number
+	// we submitted. Never fall back to in.Name — a name is not a contract ref.
 	if in.No != "" {
 		return in.No, nil
 	}
-	return in.Name, nil
+	return "", fmt.Errorf("contracts create: response missing contract number")
 }

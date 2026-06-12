@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	crmDB "github.com/iag/crm/backend/db"
+	"github.com/iag/crm/backend/internal/aiclient"
 	"github.com/iag/crm/backend/internal/auth"
 	"github.com/iag/crm/backend/internal/bridge"
 	crmconsumer "github.com/iag/crm/backend/internal/consumer"
@@ -141,6 +142,11 @@ func main() {
 		BaseURL: cfg.ContractsAPIURL, TokenURL: saCfg.TokenURL,
 		ServiceClientID: saCfg.ClientID, ServiceSecret: saCfg.Secret,
 	})
+	aiClient := aiclient.New(aiclient.Config{
+		BaseURL: cfg.AIAPIURL, TokenURL: saCfg.TokenURL,
+		ServiceClientID: saCfg.ClientID, ServiceSecret: saCfg.Secret,
+		Audience: cfg.AIAudience,
+	})
 	bridgeSvc := &bridge.Service{Repo: repo, DMS: dmsClient}
 	integrationsSvc := integrations.New(repo, integrations.Config{
 		GoogleRedirectURL:       cfg.GoogleOAuthRedirectURL,
@@ -179,7 +185,7 @@ func main() {
 	api := &handlers.API{
 		Repo: repo, Cfg: cfg, Events: eventBus,
 		Finance: financeClient, Users: usersClient,
-		DMS: dmsClient, Contracts: contractsClient, Bridge: bridgeSvc,
+		DMS: dmsClient, Contracts: contractsClient, AI: aiClient, Bridge: bridgeSvc,
 		Integrations: integrationsSvc,
 	}
 	engine := router.New(router.Options{

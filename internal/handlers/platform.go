@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/iag/crm/backend/internal/aiclient"
 	"github.com/iag/crm/backend/internal/auth"
 	"github.com/iag/crm/backend/internal/bridge"
 	"github.com/iag/crm/backend/internal/config"
@@ -29,6 +30,7 @@ type API struct {
 	Users     *usersclient.Client
 	DMS       *dmsclient.Client
 	Contracts *contractsclient.Client
+	AI        *aiclient.Client
 	Bridge        *bridge.Service
 	Integrations  *integrations.Service
 }
@@ -55,6 +57,26 @@ func scopedListOpts(c *gin.Context) store.ListOpts {
 		}
 	}
 	return opts
+}
+
+// enforceOwner applies the same row-level scoping as scopedListOpts to a single
+// fetched record. When the caller is a sales_rep and the record is owned by
+// someone else, it responds 404 (don't leak existence) and returns false so the
+// handler stops. Managers/superusers are unrestricted, and records with no owner
+// are left visible. This is access control by sales-rep ownership, not tenancy.
+func enforceOwner(c *gin.Context, ownerEmail string) bool {
+	claims, ok := middleware.Claims(c)
+	if !ok || claims == nil {
+		return true
+	}
+	if models.RoleFromGroups(claims.Groups, claims.IsSuperuser) != "sales_rep" {
+		return true
+	}
+	if ownerEmail != "" && claims.Email != "" && ownerEmail != claims.Email {
+		notFound(c)
+		return false
+	}
+	return true
 }
 
 func paginated[T any](c *gin.Context, data []T, total int) {

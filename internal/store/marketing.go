@@ -43,7 +43,7 @@ func (r *Repository) Lookups(ctx context.Context, kind string) ([]LookupItem, er
 }
 
 func (r *Repository) lookupQuery(ctx context.Context, q string) ([]LookupItem, error) {
-	rows, err := r.pool.Query(ctx, q)
+	rows, err := r.db(ctx).Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -69,11 +69,11 @@ type NamedRow struct {
 
 func (r *Repository) listNamed(ctx context.Context, table string, extraCols string, limit, offset int) ([]NamedRow, int, error) {
 	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT COUNT(*)::int FROM "+table).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM "+table).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	q := fmt.Sprintf(`SELECT id, name, %s, created_at, updated_at FROM %s ORDER BY created_at DESC LIMIT $1 OFFSET $2`, extraCols, table)
-	rows, err := r.pool.Query(ctx, q, clampLimit(limit), offset)
+	rows, err := r.db(ctx).Query(ctx, q, clampLimit(limit), offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -97,12 +97,12 @@ func (r *Repository) createNamed(ctx context.Context, table, prefix string, star
 		return NamedRow{}, err
 	}
 	now := time.Now().UTC()
-	_, err = r.pool.Exec(ctx,
+	_, err = r.db(ctx).Exec(ctx,
 		fmt.Sprintf(`INSERT INTO %s (id, name, extra, created_at, updated_at) VALUES ($1,$2,$3,$4,$4)`, table),
 		id, name, extraJSON, now)
 	if err != nil {
 		// fallback for tables without generic extra column
-		_, err = r.pool.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (id, name, created_at, updated_at) VALUES ($1,$2,$3,$3)`, table), id, name, now)
+		_, err = r.db(ctx).Exec(ctx, fmt.Sprintf(`INSERT INTO %s (id, name, created_at, updated_at) VALUES ($1,$2,$3,$3)`, table), id, name, now)
 		if err != nil {
 			return NamedRow{}, err
 		}
@@ -127,7 +127,7 @@ func (r *Repository) ListSegments(ctx context.Context, opts ListOpts) ([]map[str
 
 func (r *Repository) CreateSegment(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "SEG", 100)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_segments (id, name, kind, refresh, rules, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
 	`, id, str(in, "name"), str(in, "kind"), str(in, "refresh"), str(in, "rules"))
@@ -143,7 +143,7 @@ func (r *Repository) ListJourneys(ctx context.Context, opts ListOpts) ([]map[str
 
 func (r *Repository) CreateJourney(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "JRN", 100)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_journeys (id, name, trigger, template, goal, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
 	`, id, str(in, "name"), str(in, "trigger"), str(in, "template"), str(in, "goal"))
@@ -159,7 +159,7 @@ func (r *Repository) ListPersonas(ctx context.Context, opts ListOpts) ([]map[str
 
 func (r *Repository) CreatePersona(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "PSN", 100)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_personas (id, name, buyer_role, region, seniority, content_tags, story, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
 	`, id, str(in, "name"), str(in, "buyer_role"), str(in, "region"), str(in, "seniority"), str(in, "content_tags"), str(in, "story"))
@@ -175,7 +175,7 @@ func (r *Repository) ListEvents(ctx context.Context, opts ListOpts) ([]map[strin
 
 func (r *Repository) CreateEvent(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "EVT", 100)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_events (id, name, event_type, city, budget_usd, mql_target, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
 	`, id, str(in, "name"), str(in, "type"), str(in, "city"), num(in, "budget_usd"), intNum(in, "mql_target"))
@@ -191,7 +191,7 @@ func (r *Repository) ListContentAssets(ctx context.Context, opts ListOpts) ([]ma
 
 func (r *Repository) CreateContentAsset(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "AST", 100)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_content_assets (id, name, asset_type, format, tags, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
 	`, id, str(in, "name"), str(in, "type"), str(in, "format"), str(in, "tags"))
@@ -211,7 +211,7 @@ func (r *Repository) CreateEmailSend(ctx context.Context, in map[string]any) (ma
 	if status == "" {
 		status = "draft"
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_email_sends (id, subject, template, body, status, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
 	`, id, str(in, "subject"), str(in, "template"), str(in, "body"), status)
@@ -227,7 +227,7 @@ func (r *Repository) ListSocialPosts(ctx context.Context, opts ListOpts) ([]map[
 
 func (r *Repository) CreateSocialPost(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "SOC", 100)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_social_posts (id, platforms, content, status, created_at, updated_at)
 		VALUES ($1,$2,$3,'draft',NOW(),NOW())
 	`, id, str(in, "platforms"), str(in, "content"))
@@ -243,7 +243,7 @@ func (r *Repository) ListSEOKeywords(ctx context.Context, opts ListOpts) ([]map[
 
 func (r *Repository) CreateSEOKeyword(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "KW", 100)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_seo_keywords (id, term, intent, locale, landing_page, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
 	`, id, str(in, "term"), str(in, "intent"), str(in, "locale"), str(in, "landing_page"))
@@ -260,7 +260,7 @@ func (r *Repository) ListBudgetPlans(ctx context.Context, opts ListOpts) ([]map[
 func (r *Repository) CreateBudgetPlan(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "BDG", 100)
 	ch, _ := json.Marshal(in["channels"])
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_budget_plans (id, name, quarter, owner, channels, mql_target, sql_target, won_target, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
 	`, id, str(in, "name"), str(in, "quarter"), str(in, "owner"), ch, intNum(in, "mql_target"), intNum(in, "sql_target"), num(in, "won_target"))
@@ -275,7 +275,7 @@ func (r *Repository) ListMQLs(ctx context.Context, opts ListOpts) ([]map[string]
 }
 
 func (r *Repository) GetBrandKit(ctx context.Context) (map[string]any, error) {
-	row := r.pool.QueryRow(ctx, `SELECT colors, fonts, voice, updated_at FROM crm_brand_kit WHERE id = 'default'`)
+	row := r.db(ctx).QueryRow(ctx, `SELECT colors, fonts, voice, updated_at FROM crm_brand_kit WHERE id = 'default'`)
 	var colors, fonts []byte
 	var voice string
 	var updated time.Time
@@ -297,13 +297,13 @@ func (r *Repository) GetBrandKit(ctx context.Context) (map[string]any, error) {
 
 func (r *Repository) MarketingHubSummary(ctx context.Context) (map[string]any, error) {
 	var campaigns, mqls, assets, events int
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_campaigns WHERE status = 'live'`).Scan(&campaigns)
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_mqls`).Scan(&mqls)
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_content_assets`).Scan(&assets)
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_events WHERE status IN ('planned','live')`).Scan(&events)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_campaigns WHERE status = 'live'`).Scan(&campaigns)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_mqls`).Scan(&mqls)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_content_assets`).Scan(&assets)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_events WHERE status IN ('planned','live')`).Scan(&events)
 
 	var plannedBudget, campaignSpend, eventSpend float64
-	_ = r.pool.QueryRow(ctx, `
+	_ = r.db(ctx).QueryRow(ctx, `
 		SELECT COALESCE(SUM(
 			COALESCE((channels->>'email')::numeric, 0) +
 			COALESCE((channels->>'events')::numeric, 0) +
@@ -312,11 +312,11 @@ func (r *Repository) MarketingHubSummary(ctx context.Context) (map[string]any, e
 		), 0)
 		FROM crm_budget_plans
 	`).Scan(&plannedBudget)
-	_ = r.pool.QueryRow(ctx, `
+	_ = r.db(ctx).QueryRow(ctx, `
 		SELECT COALESCE(SUM(budget_usd), 0) FROM crm_campaigns
 		WHERE status = 'live' AND budget_usd IS NOT NULL
 	`).Scan(&campaignSpend)
-	_ = r.pool.QueryRow(ctx, `
+	_ = r.db(ctx).QueryRow(ctx, `
 		SELECT COALESCE(SUM(budget_usd), 0) FROM crm_events
 		WHERE status IN ('planned','live') AND budget_usd IS NOT NULL
 	`).Scan(&eventSpend)
@@ -329,7 +329,7 @@ func (r *Repository) MarketingHubSummary(ctx context.Context) (map[string]any, e
 }
 
 func (r *Repository) DemandGenMetrics(ctx context.Context) (map[string]any, error) {
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT
 			CASE
 				WHEN LOWER(source) LIKE '%email%' THEN 'Email'
@@ -356,12 +356,12 @@ func (r *Repository) DemandGenMetrics(ctx context.Context) (map[string]any, erro
 		counts[ch] = mqls
 	}
 	var emailSends, socialPosts, events int
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_email_sends WHERE status IN ('sent','queued')`).Scan(&emailSends)
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_social_posts WHERE LOWER(platforms) LIKE '%linkedin%'`).Scan(&socialPosts)
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_events WHERE event_type ILIKE '%trade%'`).Scan(&events)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_email_sends WHERE status IN ('sent','queued')`).Scan(&emailSends)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_social_posts WHERE LOWER(platforms) LIKE '%linkedin%'`).Scan(&socialPosts)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_events WHERE event_type ILIKE '%trade%'`).Scan(&events)
 
 	var budgetSpend float64
-	_ = r.pool.QueryRow(ctx, `
+	_ = r.db(ctx).QueryRow(ctx, `
 		SELECT COALESCE(SUM(
 			COALESCE((channels->>'email')::numeric, 0) +
 			COALESCE((channels->>'events')::numeric, 0) +
@@ -435,14 +435,14 @@ func intNum(m map[string]any, k string) int {
 func (r *Repository) listGeneric(ctx context.Context, table string, opts ListOpts, cols string) ([]map[string]any, int, error) {
 	opts.Limit = clampLimit(opts.Limit)
 	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT COUNT(*)::int FROM "+table).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM "+table).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	q := fmt.Sprintf(`
 		SELECT row_to_json(x)::text FROM (
 			SELECT id, %s, created_at, updated_at FROM %s ORDER BY created_at DESC LIMIT $1 OFFSET $2
 		) x`, cols, table)
-	rows, err := r.pool.Query(ctx, q, opts.Limit, opts.Offset)
+	rows, err := r.db(ctx).Query(ctx, q, opts.Limit, opts.Offset)
 	if err != nil {
 		return nil, 0, err
 	}

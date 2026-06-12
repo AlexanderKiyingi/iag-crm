@@ -208,17 +208,24 @@ func (h *API) PutLoyaltyTierRules(c *gin.Context) {
 		badRequest(c, "invalid body")
 		return
 	}
-	rules, err := h.Repo.PutLoyaltyTierRules(c.Request.Context(), in, auth.ActorName(c))
-	if err != nil {
+	var rules map[string]any
+	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+		var e error
+		rules, e = h.Repo.PutLoyaltyTierRules(ctx, in, auth.ActorName(c))
+		if e != nil {
+			return e
+		}
+		if h.Events != nil {
+			return h.Events.EnqueueCommercial(ctx, "crm.loyalty.tier_rules.saved", map[string]any{
+				"name": rules["name"],
+			}, "loyalty")
+		}
+		return nil
+	}); err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "tier rules update failed")
 		return
 	}
 	h.recordAudit(c, "TierRulesSaved", "Updated Pearl Club tier thresholds")
-	if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), "crm.loyalty.tier_rules.saved", map[string]any{
-			"name": rules["name"],
-		}, "loyalty")
-	}
 	c.JSON(http.StatusOK, rules)
 }
 

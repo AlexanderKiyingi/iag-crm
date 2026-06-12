@@ -55,8 +55,20 @@ func (h *API) finalizeDealWon(c *gin.Context, item models.Deal) models.Deal {
 }
 
 func (h *API) SendQuote(c *gin.Context) {
-	item, err := h.Repo.PatchQuote(c.Request.Context(), c.Param("id"), map[string]any{"status": "sent"})
-	if err != nil {
+	var item models.Quote
+	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+		var e error
+		item, e = h.Repo.PatchQuote(ctx, c.Param("id"), map[string]any{"status": "sent"})
+		if e != nil {
+			return e
+		}
+		if h.Events != nil {
+			return h.Events.EnqueueCommercial(ctx, events.TypeQuoteSent, map[string]any{
+				"quote_id": item.ID, "ref": item.Ref, "account": item.Account, "total": item.Total,
+			}, item.ID)
+		}
+		return nil
+	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound(c)
 			return
@@ -65,11 +77,6 @@ func (h *API) SendQuote(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, "QuoteSent", store.AuditDetail("quote", item.ID, "sent"))
-	if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), events.TypeQuoteSent, map[string]any{
-			"quote_id": item.ID, "ref": item.Ref, "account": item.Account, "total": item.Total,
-		}, item.ID)
-	}
 	c.JSON(http.StatusOK, item)
 }
 

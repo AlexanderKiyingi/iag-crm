@@ -38,7 +38,7 @@ func (r *Repository) pipelineSeries(ctx context.Context, rangeKey string) ([]int
 	now := time.Now().UTC()
 	start := now.Add(-cfg.span)
 
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT date_trunc($1, updated_at) AS bucket,
 		       COALESCE(SUM(amount * probability / 100.0), 0) AS weighted
 		FROM crm_deals

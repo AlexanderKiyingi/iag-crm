@@ -14,7 +14,7 @@ func (r *Repository) AppendAudit(ctx context.Context, action, detail, userName s
 		return models.AuditEntry{}, err
 	}
 	now := time.Now().UTC()
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_audit_entries (id, logged_at, user_name, action, detail)
 		VALUES ($1, $2, $3, $4, $5)
 	`, id, now, userName, action, detail)
@@ -35,10 +35,10 @@ func (r *Repository) ListAudit(ctx context.Context, limit int) ([]models.AuditEn
 		limit = 50
 	}
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_audit_entries`).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_audit_entries`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, logged_at, user_name, action, detail
 		FROM crm_audit_entries ORDER BY logged_at DESC LIMIT $1
 	`, limit)
@@ -59,7 +59,7 @@ func (r *Repository) ListAudit(ctx context.Context, limit int) ([]models.AuditEn
 
 func (r *Repository) GetAudit(ctx context.Context, id string) (models.AuditEntry, error) {
 	var e models.AuditEntry
-	err := r.pool.QueryRow(ctx, `
+	err := r.db(ctx).QueryRow(ctx, `
 		SELECT id, logged_at, user_name, action, detail
 		FROM crm_audit_entries WHERE id = $1
 	`, id).Scan(&e.ID, &e.LoggedAt, &e.UserName, &e.Action, &e.Detail)
@@ -67,7 +67,7 @@ func (r *Repository) GetAudit(ctx context.Context, id string) (models.AuditEntry
 }
 
 func (r *Repository) LogAPIRequest(ctx context.Context, method, path string, statusCode int, userName string, durationMs int, clientIP string) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_api_audit (method, path, status_code, user_name, duration_ms, client_ip)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, method, path, statusCode, userName, durationMs, clientIP)
@@ -77,7 +77,7 @@ func (r *Repository) LogAPIRequest(ctx context.Context, method, path string, sta
 func (r *Repository) APIMonitoringSummary(ctx context.Context) (map[string]any, error) {
 	var total24h, errors24h int
 	var avgMs float64
-	err := r.pool.QueryRow(ctx, `
+	err := r.db(ctx).QueryRow(ctx, `
 		SELECT
 			COUNT(*)::int,
 			COUNT(*) FILTER (WHERE status_code >= 400)::int,
@@ -89,7 +89,7 @@ func (r *Repository) APIMonitoringSummary(ctx context.Context) (map[string]any, 
 		return nil, err
 	}
 	var bridgePending int
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_bridge_pending_imports WHERE status = 'pending'`).Scan(&bridgePending)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_bridge_pending_imports WHERE status = 'pending'`).Scan(&bridgePending)
 	return map[string]any{
 		"requests_24h":       total24h,
 		"errors_24h":         errors24h,
@@ -103,7 +103,7 @@ func (r *Repository) APIMonitoringActivity(ctx context.Context, limit int) ([]ma
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT method, path, status_code, user_name, duration_ms, logged_at
 		FROM crm_api_audit ORDER BY logged_at DESC LIMIT $1
 	`, limit)
@@ -132,7 +132,7 @@ func (r *Repository) ListAPIAuditLogs(ctx context.Context, limit int) ([]map[str
 		limit = 50
 	}
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_api_audit`).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_api_audit`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	items, err := r.APIMonitoringActivity(ctx, limit)
@@ -143,7 +143,7 @@ func (r *Repository) ListBuyingSignals(ctx context.Context, limit int) ([]map[st
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, account_id, account_name, signal_type, strength, action_hint, observed_at
 		FROM crm_buying_signals ORDER BY observed_at DESC LIMIT $1
 	`, limit)
@@ -178,7 +178,7 @@ func defaultBuyingSignals() []map[string]any {
 }
 
 func (r *Repository) GetLoyaltyTierRules(ctx context.Context) (map[string]any, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, name, bronze_min_orders, bronze_min_revenue, silver_min_orders, silver_min_revenue,
 		       gold_min_orders, gold_min_revenue, updated_at, updated_by
 		FROM crm_loyalty_tier_rules WHERE id = 'default'
@@ -219,7 +219,7 @@ func (r *Repository) PutLoyaltyTierRules(ctx context.Context, in map[string]any,
 		gOrd = intField(gold, "min_orders", gOrd)
 		gRev = floatField(gold, "min_revenue_m", gRev)
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		UPDATE crm_loyalty_tier_rules SET
 			name = $1, bronze_min_orders = $2, bronze_min_revenue = $3,
 			silver_min_orders = $4, silver_min_revenue = $5,
@@ -274,7 +274,7 @@ func (r *Repository) AppendBridgeSyncLog(ctx context.Context, message string) er
 	if err != nil {
 		return err
 	}
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_bridge_sync_log (id, stream_id, level, message, created_at)
 		VALUES ($1, 'all', 'info', $2, NOW())
 	`, id, message)

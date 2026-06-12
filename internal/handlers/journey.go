@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -50,18 +51,25 @@ func (h *API) EnrollJourney(c *gin.Context) {
 		badRequest(c, "contact_id or lead_id required")
 		return
 	}
-	item, err := h.Repo.EnrollInJourney(c.Request.Context(), c.Param("id"), store.EnrollInput{
-		ContactID: in.ContactID, LeadID: in.LeadID,
-		SubjectEmail: in.SubjectEmail, SubjectName: in.SubjectName,
-	})
-	if err != nil {
+	var item store.JourneyEnrollment
+	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+		var e error
+		item, e = h.Repo.EnrollInJourney(ctx, c.Param("id"), store.EnrollInput{
+			ContactID: in.ContactID, LeadID: in.LeadID,
+			SubjectEmail: in.SubjectEmail, SubjectName: in.SubjectName,
+		})
+		if e != nil {
+			return e
+		}
+		if h.Events != nil {
+			return h.Events.EnqueueCommercial(ctx, events.TypeJourneyEnrolled, map[string]any{
+				"journey_id": c.Param("id"), "enrollment_id": item.ID,
+			}, item.ID)
+		}
+		return nil
+	}); err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "enroll failed")
 		return
-	}
-	if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), events.TypeJourneyEnrolled, map[string]any{
-			"journey_id": c.Param("id"), "enrollment_id": item.ID,
-		}, item.ID)
 	}
 	c.JSON(http.StatusCreated, item)
 }

@@ -15,9 +15,9 @@ import (
 // UpsertOutletFromDMS syncs a DMS outlet into crm_outlets; returns upserted, pendingCreated.
 func (r *Repository) UpsertOutletFromDMS(ctx context.Context, o dmsclient.Outlet) (bool, bool, error) {
 	var exists bool
-	_ = r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM crm_outlets WHERE dms_ref = $1)`, o.ID).Scan(&exists)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM crm_outlets WHERE dms_ref = $1)`, o.ID).Scan(&exists)
 	if exists {
-		_, err := r.pool.Exec(ctx, `
+		_, err := r.db(ctx).Exec(ctx, `
 			UPDATE crm_outlets SET name = $2, city = $3, segment = $4, health = $5, updated_at = NOW()
 			WHERE dms_ref = $1
 		`, o.ID, o.Name, o.Address, o.Channel, scoreToHealth(o.Score))
@@ -27,7 +27,7 @@ func (r *Repository) UpsertOutletFromDMS(ctx context.Context, o dmsclient.Outlet
 	if err != nil {
 		return false, false, err
 	}
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_outlets (id, name, dms_ref, city, segment, health, owner, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,'',NOW(),NOW())
 	`, id, o.Name, o.ID, o.Address, o.Channel, scoreToHealth(o.Score))
@@ -54,7 +54,7 @@ func scoreToHealth(score string) int {
 // EnsurePendingImport creates a pending import row when missing.
 func (r *Repository) EnsurePendingImport(ctx context.Context, dmsOutletID, name string) (bool, error) {
 	var exists bool
-	_ = r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM crm_bridge_pending_imports WHERE dms_outlet_id = $1)`, dmsOutletID).Scan(&exists)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM crm_bridge_pending_imports WHERE dms_outlet_id = $1)`, dmsOutletID).Scan(&exists)
 	if exists {
 		return false, nil
 	}
@@ -62,7 +62,7 @@ func (r *Repository) EnsurePendingImport(ctx context.Context, dmsOutletID, name 
 	if err != nil {
 		return false, err
 	}
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_bridge_pending_imports (id, dms_outlet_id, channel, beat, status, created_at)
 		VALUES ($1,$2,'DMS','auto','pending',NOW())
 	`, id, dmsOutletID)
@@ -70,27 +70,27 @@ func (r *Repository) EnsurePendingImport(ctx context.Context, dmsOutletID, name 
 }
 
 func (r *Repository) TouchBridgeStreams(ctx context.Context) error {
-	_, err := r.pool.Exec(ctx, `UPDATE crm_bridge_streams SET last_sync_at = NOW(), record_count = record_count + 1`)
+	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_bridge_streams SET last_sync_at = NOW(), record_count = record_count + 1`)
 	return err
 }
 
 func (r *Repository) SetDealFinanceARRef(ctx context.Context, dealID, ref string) error {
-	_, err := r.pool.Exec(ctx, `UPDATE crm_deals SET finance_ar_ref = $2, updated_at = NOW() WHERE id = $1`, dealID, ref)
+	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_deals SET finance_ar_ref = $2, updated_at = NOW() WHERE id = $1`, dealID, ref)
 	return err
 }
 
 func (r *Repository) SetQuoteFinanceARRef(ctx context.Context, quoteID, ref string) error {
-	_, err := r.pool.Exec(ctx, `UPDATE crm_quotes SET finance_ar_ref = $2, updated_at = NOW() WHERE id = $1`, quoteID, ref)
+	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_quotes SET finance_ar_ref = $2, updated_at = NOW() WHERE id = $1`, quoteID, ref)
 	return err
 }
 
 func (r *Repository) SetQuoteContractRef(ctx context.Context, quoteID, contractNo string) error {
-	_, err := r.pool.Exec(ctx, `UPDATE crm_quotes SET contract_ref = $2, updated_at = NOW() WHERE id = $1 OR ref = $1`, quoteID, contractNo)
+	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_quotes SET contract_ref = $2, updated_at = NOW() WHERE id = $1 OR ref = $1`, quoteID, contractNo)
 	return err
 }
 
 func (r *Repository) DeleteDeal(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM crm_deals WHERE id = $1`, id)
+	tag, err := r.db(ctx).Exec(ctx, `DELETE FROM crm_deals WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -101,7 +101,7 @@ func (r *Repository) DeleteDeal(ctx context.Context, id string) error {
 }
 
 func (r *Repository) DeleteLead(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM crm_leads WHERE id = $1`, id)
+	tag, err := r.db(ctx).Exec(ctx, `DELETE FROM crm_leads WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func (r *Repository) DeleteLead(ctx context.Context, id string) error {
 }
 
 func (r *Repository) DeleteQuote(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM crm_quotes WHERE id = $1`, id)
+	tag, err := r.db(ctx).Exec(ctx, `DELETE FROM crm_quotes WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func (r *Repository) DeleteQuote(ctx context.Context, id string) error {
 }
 
 func (r *Repository) DeleteTicket(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM crm_tickets WHERE id = $1`, id)
+	tag, err := r.db(ctx).Exec(ctx, `DELETE FROM crm_tickets WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -134,7 +134,7 @@ func (r *Repository) DeleteTicket(ctx context.Context, id string) error {
 }
 
 func (r *Repository) DeleteCampaign(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM crm_campaigns WHERE id = $1`, id)
+	tag, err := r.db(ctx).Exec(ctx, `DELETE FROM crm_campaigns WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (r *Repository) PatchActivity(ctx context.Context, id string, patch map[str
 		return r.GetActivity(ctx, id)
 	}
 	q := fmt.Sprintf("UPDATE crm_activities SET %s WHERE id = $1", stringsJoin(sets, ", "))
-	tag, err := r.pool.Exec(ctx, q, args...)
+	tag, err := r.db(ctx).Exec(ctx, q, args...)
 	if err != nil {
 		return models.Activity{}, err
 	}
@@ -172,7 +172,7 @@ func (r *Repository) PatchActivity(ctx context.Context, id string, patch map[str
 }
 
 func (r *Repository) DeleteActivity(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM crm_activities WHERE id = $1`, id)
+	tag, err := r.db(ctx).Exec(ctx, `DELETE FROM crm_activities WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -183,7 +183,7 @@ func (r *Repository) DeleteActivity(ctx context.Context, id string) error {
 }
 
 func (r *Repository) GetActivity(ctx context.Context, id string) (models.Activity, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id,
 		       outlet_ref, owner, occurred_at, created_at
 		FROM crm_activities WHERE id = $1
@@ -208,7 +208,7 @@ func (r *Repository) GlobalSearch(ctx context.Context, q string, limit int) ([]m
 		limit = 25
 	}
 	pattern := "%" + q + "%"
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT kind, id, label, extra FROM (
 			SELECT 'account' AS kind, id, name AS label, segment AS extra FROM crm_accounts WHERE name ILIKE $1 OR segment ILIKE $1
 			UNION ALL
@@ -237,7 +237,7 @@ func (r *Repository) GlobalSearch(ctx context.Context, q string, limit int) ([]m
 }
 
 func (r *Repository) CreateExportJob(ctx context.Context, id, page, rangeKey, formats string) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_export_jobs (id, page, range_key, formats, status, created_at)
 		VALUES ($1,$2,$3,$4,'queued',NOW())
 	`, id, page, rangeKey, formats)
@@ -245,7 +245,7 @@ func (r *Repository) CreateExportJob(ctx context.Context, id, page, rangeKey, fo
 }
 
 func (r *Repository) CompleteExportJob(ctx context.Context, id string) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		UPDATE crm_export_jobs SET status = 'completed', completed_at = NOW(),
 			result_url = '/exports/' || id || '.zip'
 		WHERE id = $1
@@ -254,7 +254,7 @@ func (r *Repository) CompleteExportJob(ctx context.Context, id string) error {
 }
 
 func (r *Repository) GetExportJob(ctx context.Context, id string) (map[string]any, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, page, range_key, formats, status, COALESCE(result_url,''), created_at, completed_at
 		FROM crm_export_jobs WHERE id = $1
 	`, id)
@@ -271,7 +271,7 @@ func (r *Repository) GetExportJob(ctx context.Context, id string) (map[string]an
 }
 
 func (r *Repository) CreateSEOAuditJob(ctx context.Context, id, url string) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_seo_audit_jobs (id, url, status, created_at) VALUES ($1,$2,'running',NOW())
 	`, id, url)
 	return err
@@ -279,7 +279,7 @@ func (r *Repository) CreateSEOAuditJob(ctx context.Context, id, url string) erro
 
 func (r *Repository) CompleteSEOAuditJob(ctx context.Context, id string, score int, findings any) error {
 	raw, _ := json.Marshal(findings)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		UPDATE crm_seo_audit_jobs SET status = 'completed', score = $2, findings = $3::jsonb, completed_at = NOW()
 		WHERE id = $1
 	`, id, score, raw)
@@ -287,7 +287,7 @@ func (r *Repository) CompleteSEOAuditJob(ctx context.Context, id string, score i
 }
 
 func (r *Repository) GetSEOAuditJob(ctx context.Context, id string) (map[string]any, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, url, status, score, findings, created_at, completed_at FROM crm_seo_audit_jobs WHERE id = $1
 	`, id)
 	var jobID, url, status string
@@ -317,7 +317,7 @@ func (r *Repository) LiveNotifications(ctx context.Context, limit int) ([]models
 	if limit <= 0 {
 		limit = 9
 	}
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT activity_type, subject, owner, occurred_at FROM crm_activities
 		ORDER BY occurred_at DESC LIMIT $1
 	`, limit)
@@ -353,7 +353,7 @@ func (r *Repository) ComputeOverviewMetrics(ctx context.Context, rangeKey string
 		return models.RangeMetrics{}, err
 	}
 	var outlets int
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_outlets`).Scan(&outlets)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_outlets`).Scan(&outlets)
 	weighted, _ := summary["pipeline_weighted"].(float64)
 	winRate, _ := summary["win_rate"].(float64)
 	velocity, _ := summary["velocity_days"].(int)
@@ -381,10 +381,10 @@ func (r *Repository) ComputeOverviewMetrics(ctx context.Context, rangeKey string
 func (r *Repository) LiveBridgeStatus(ctx context.Context) map[string]any {
 	var bridged, streams, pending int
 	var lastSync *time.Time
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_accounts WHERE dms_bridged = TRUE`).Scan(&bridged)
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_bridge_streams`).Scan(&streams)
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_bridge_pending_imports WHERE status = 'pending'`).Scan(&pending)
-	_ = r.pool.QueryRow(ctx, `SELECT MAX(last_sync_at) FROM crm_bridge_streams`).Scan(&lastSync)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_accounts WHERE dms_bridged = TRUE`).Scan(&bridged)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_bridge_streams`).Scan(&streams)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_bridge_pending_imports WHERE status = 'pending'`).Scan(&pending)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT MAX(last_sync_at) FROM crm_bridge_streams`).Scan(&lastSync)
 	last := "never"
 	if lastSync != nil {
 		last = relativeTouch(*lastSync)
