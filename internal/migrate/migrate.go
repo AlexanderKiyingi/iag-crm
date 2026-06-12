@@ -42,6 +42,25 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 		return nil, err
 	}
 
+	// Base-table self-heal. A DB can carry schema_migrations rows (recorded as
+	// applied) while the actual objects were never created — e.g. an earlier
+	// checksum-only re-stamp marked "0001_initial" applied without running its
+	// body, so its stored checksum now MATCHES the file and the mismatch branch
+	// below never fires, yet crm_accounts does not exist and 0002 fails with
+	// 42P01. When the base table is missing but migrations are recorded, force
+	// every idempotent body to re-run so the schema is rebuilt from scratch.
+	forceReapply := false
+	if len(applied) > 0 {
+		exists, err := baseTableExists(ctx, pool)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			slog.Warn("schema_migrations recorded but base table crm_accounts missing; forcing idempotent re-apply of all migrations")
+			forceReapply = true
+		}
+	}
+
 	var newlyApplied []string
 	for _, m := range migs {
 		prev, ok := applied[m.Version]
@@ -52,7 +71,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 			}
 			newlyApplied = append(newlyApplied, m.Version)
 			slog.Info("migration applied", "version", m.Version)
-		case prev.Checksum != m.Checksum:
+		case forceReapply || prev.Checksum != m.Checksum:
 			// Legacy Railway DBs carry schema_migrations rows written by an
 			// earlier migration tool whose body for this version differs from
 			// the file shipped today — e.g. an older CRM implementation that
@@ -78,6 +97,17 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 		}
 	}
 	return newlyApplied, nil
+}
+
+// baseTableExists reports whether the schema's anchor table (crm_accounts,
+// created by 0001_initial) is present. It resolves the name through the current
+// search_path with to_regclass, matching how the migration bodies reference it.
+func baseTableExists(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	var reg *string
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('crm_accounts')::text`).Scan(&reg); err != nil {
+		return false, err
+	}
+	return reg != nil, nil
 }
 
 func load(fsys fs.FS) ([]Migration, error) {
