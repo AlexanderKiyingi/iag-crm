@@ -53,23 +53,26 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 			newlyApplied = append(newlyApplied, m.Version)
 			slog.Info("migration applied", "version", m.Version)
 		case prev.Checksum != m.Checksum:
-			// Legacy Railway DBs were seeded by an earlier migration tool that
-			// stored a different checksum value for the same body. The
-			// migration files themselves are append-only (git history shows
-			// no edits) and idempotent (CREATE ... IF NOT EXISTS), so the
-			// safe action is to re-stamp the stored checksum rather than
-			// crash on every boot. Mirrors the self-heal pattern used by the
-			// other services (iag-authentication 839c292).
-			slog.Warn("migration checksum mismatch; re-stamping",
+			// Legacy Railway DBs carry schema_migrations rows written by an
+			// earlier migration tool whose body for this version differs from
+			// the file shipped today — e.g. an older CRM implementation that
+			// recorded "0001_initial" without ever creating crm_accounts.
+			// Re-stamping the checksum alone assumes the file's objects already
+			// exist; for those rows they do not, so later migrations that
+			// reference them (0002 -> crm_accounts) fail with 42P01. Every
+			// migration body is idempotent (CREATE ... IF NOT EXISTS, ADD
+			// COLUMN IF NOT EXISTS, INSERT ... ON CONFLICT DO NOTHING), so the
+			// safe self-heal is to re-run the body and then re-stamp the
+			// checksum in the same transaction. Mirrors the self-heal pattern
+			// used by the other services (iag-authentication 839c292).
+			slog.Warn("migration checksum mismatch; re-applying idempotent body and re-stamping",
 				"version", m.Version,
 				"stored", prev.Checksum,
 				"file", m.Checksum,
 			)
-			if _, err := pool.Exec(ctx,
-				`UPDATE schema_migrations SET checksum = $1 WHERE version = $2`,
-				m.Checksum, m.Version); err != nil {
+			if err := reapply(ctx, pool, m); err != nil {
 				return newlyApplied, fmt.Errorf(
-					"migration %s re-stamp checksum: %w", m.Version, err,
+					"migration %s re-apply: %w", m.Version, err,
 				)
 			}
 		}
@@ -141,6 +144,28 @@ func apply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
 		if strings.Contains(err.Error(), "23505") {
 			return errors.New("concurrent migration: version already applied by another process")
 		}
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// reapply re-runs an already-recorded migration whose stored checksum no longer
+// matches the shipped file, then re-stamps the checksum. Safe only because every
+// migration body is idempotent; running it against a DB that already has the
+// objects is a no-op, while a legacy DB missing them is brought up to date.
+func reapply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, m.Body); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE schema_migrations SET checksum = $1 WHERE version = $2`,
+		m.Checksum, m.Version); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
