@@ -37,11 +37,11 @@ func (r *Repository) ListLeads(ctx context.Context, opts ListOpts) ([]models.Lea
 	}
 	whereSQL := strings.Join(where, " AND ")
 	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_leads WHERE "+whereSQL, args...).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_leads WHERE "+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	args = append(args, opts.Limit, opts.Offset)
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, name, company, email, phone, source, segment, region, score, status, owner, notes, created_at, updated_at
 		FROM crm_leads WHERE `+whereSQL+` ORDER BY score DESC, created_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
@@ -60,7 +60,7 @@ func (r *Repository) ListLeads(ctx context.Context, opts ListOpts) ([]models.Lea
 }
 
 func (r *Repository) GetLead(ctx context.Context, id string) (models.Lead, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, name, company, email, phone, source, segment, region, score, status, owner, notes, created_at, updated_at
 		FROM crm_leads WHERE id = $1
 	`, id)
@@ -93,7 +93,7 @@ func (r *Repository) CreateLead(ctx context.Context, in LeadInput) (models.Lead,
 		in.Score = 65
 	}
 	now := time.Now().UTC()
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_leads (id, name, company, email, phone, source, segment, region, score, status, owner, notes, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
 	`, id, in.Name, in.Company, in.Email, in.Phone, in.Source, in.Segment, in.Region, in.Score, in.Status, in.Owner, in.Notes, now)
@@ -127,7 +127,7 @@ func (r *Repository) PatchLead(ctx context.Context, id string, patch map[string]
 		return r.GetLead(ctx, id)
 	}
 	args = append(args, id)
-	_, err := r.pool.Exec(ctx, `UPDATE crm_leads SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
+	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_leads SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
 	if err != nil {
 		return models.Lead{}, err
 	}
@@ -135,30 +135,46 @@ func (r *Repository) PatchLead(ctx context.Context, id string, patch map[string]
 }
 
 func (r *Repository) BumpLeadScore(ctx context.Context, leadID string, delta int) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		UPDATE crm_leads SET score = LEAST(100, score + $2), updated_at = NOW() WHERE id = $1
 	`, leadID, delta)
 	return err
 }
 
 func (r *Repository) ConvertLead(ctx context.Context, leadID string, dealIn DealInput) (models.Deal, error) {
-	lead, err := r.GetLead(ctx, leadID)
-	if err != nil {
-		return models.Deal{}, err
-	}
-	if dealIn.Name == "" {
-		dealIn.Name = lead.Company
-		if dealIn.Name == "" {
-			dealIn.Name = lead.Name
+	var deal models.Deal
+	err := r.WithinTx(ctx, func(ctx context.Context) error {
+		lead, err := r.GetLead(ctx, leadID)
+		if err != nil {
+			return err
 		}
-	}
-	if dealIn.Owner == "" {
-		dealIn.Owner = lead.Owner
-	}
-	deal, err := r.CreateDeal(ctx, dealIn)
+		if dealIn.Name == "" {
+			dealIn.Name = lead.Company
+			if dealIn.Name == "" {
+				dealIn.Name = lead.Name
+			}
+		}
+		if dealIn.Owner == "" {
+			dealIn.Owner = lead.Owner
+		}
+		deal, err = r.CreateDeal(ctx, dealIn)
+		if err != nil {
+			return err
+		}
+		// Mark the lead converted in the same transaction as the deal insert.
+		// If this fails the whole conversion rolls back, so a retry can't leave
+		// an orphaned deal behind or double-convert the lead.
+		ct, err := r.db(ctx).Exec(ctx, `UPDATE crm_leads SET status = 'converted', converted_deal_id = $2, updated_at = NOW() WHERE id = $1`, leadID, deal.ID)
+		if err != nil {
+			return err
+		}
+		if ct.RowsAffected() == 0 {
+			return pgx.ErrNoRows
+		}
+		return nil
+	})
 	if err != nil {
 		return models.Deal{}, err
 	}
-	_, _ = r.pool.Exec(ctx, `UPDATE crm_leads SET status = 'converted', converted_deal_id = $2, updated_at = NOW() WHERE id = $1`, leadID, deal.ID)
 	return deal, nil
 }

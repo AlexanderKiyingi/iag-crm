@@ -51,7 +51,7 @@ func (r *Repository) UpsertIntegrationConnection(ctx context.Context, c Integrat
 	if err != nil {
 		return err
 	}
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_integration_connections (
 			user_email, provider, provider_user_id, access_token, refresh_token,
 			token_expires_at, scopes, updated_at
@@ -70,7 +70,7 @@ func (r *Repository) UpsertIntegrationConnection(ctx context.Context, c Integrat
 func (r *Repository) GetIntegrationConnection(ctx context.Context, userEmail, provider string) (IntegrationConnection, error) {
 	var c IntegrationConnection
 	var accessStored, refreshStored string
-	err := r.pool.QueryRow(ctx, `
+	err := r.db(ctx).QueryRow(ctx, `
 		SELECT user_email, provider, provider_user_id, access_token, refresh_token,
 		       token_expires_at, scopes, calendar_synced_at, email_synced_at, updated_at
 		FROM crm_integration_connections WHERE user_email = $1 AND provider = $2
@@ -90,7 +90,7 @@ func (r *Repository) GetIntegrationConnection(ctx context.Context, userEmail, pr
 }
 
 func (r *Repository) ListIntegrationConnections(ctx context.Context, userEmail string) ([]IntegrationConnection, error) {
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT user_email, provider, provider_user_id, '', '', token_expires_at, scopes,
 		       calendar_synced_at, email_synced_at, updated_at
 		FROM crm_integration_connections WHERE user_email = $1 ORDER BY provider
@@ -113,12 +113,12 @@ func (r *Repository) ListIntegrationConnections(ctx context.Context, userEmail s
 }
 
 func (r *Repository) DeleteIntegrationConnection(ctx context.Context, userEmail, provider string) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM crm_integration_connections WHERE user_email = $1 AND provider = $2`, userEmail, provider)
+	_, err := r.db(ctx).Exec(ctx, `DELETE FROM crm_integration_connections WHERE user_email = $1 AND provider = $2`, userEmail, provider)
 	return err
 }
 
 func (r *Repository) TouchCalendarSync(ctx context.Context, userEmail, provider string) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		UPDATE crm_integration_connections SET calendar_synced_at = NOW(), updated_at = NOW()
 		WHERE user_email = $1 AND provider = $2
 	`, userEmail, provider)
@@ -126,7 +126,7 @@ func (r *Repository) TouchCalendarSync(ctx context.Context, userEmail, provider 
 }
 
 func (r *Repository) TouchEmailSync(ctx context.Context, userEmail, provider string) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		UPDATE crm_integration_connections SET email_synced_at = NOW(), updated_at = NOW()
 		WHERE user_email = $1 AND provider = $2
 	`, userEmail, provider)
@@ -134,7 +134,7 @@ func (r *Repository) TouchEmailSync(ctx context.Context, userEmail, provider str
 }
 
 func (r *Repository) TouchContactByEmail(ctx context.Context, email string) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		UPDATE crm_contacts SET updated_at = NOW() WHERE LOWER(email) = LOWER($1)
 	`, email)
 	return err

@@ -48,10 +48,10 @@ func scanQuote(row pgx.Row) (models.Quote, error) {
 func (r *Repository) ListQuotes(ctx context.Context, opts ListOpts) ([]models.Quote, int, error) {
 	opts.Limit = clampLimit(opts.Limit)
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_quotes`).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_quotes`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
 		       valid_until, total, status, version, owner, line_items, finance_ar_ref, contract_ref, created_at, updated_at
 		FROM crm_quotes ORDER BY created_at DESC LIMIT $1 OFFSET $2
@@ -99,13 +99,15 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 	}
 	accountID := in.AccountID
 	if accountID == "" && in.Account != "" {
-		var aid string
-		_ = r.pool.QueryRow(ctx, `SELECT id FROM crm_accounts WHERE name = $1 LIMIT 1`, in.Account).Scan(&aid)
-		accountID = aid
+		resolved, err := r.resolveAccountID(ctx, in.Account)
+		if err != nil {
+			return models.Quote{}, err
+		}
+		accountID = resolved
 	}
 	lineRaw, _ := json.Marshal(in.LineItems)
 	now := time.Now().UTC()
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_quotes (id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
 			valid_until, total, status, version, owner, line_items, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'draft',1,$12,$13,$14,$14)
@@ -114,7 +116,7 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 	if err != nil {
 		return models.Quote{}, err
 	}
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
 		       valid_until, total, status, version, owner, line_items, finance_ar_ref, contract_ref, created_at, updated_at
 		FROM crm_quotes WHERE id = $1
@@ -123,7 +125,7 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 }
 
 func (r *Repository) GetQuote(ctx context.Context, id string) (models.Quote, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
 		       valid_until, total, status, version, owner, line_items, finance_ar_ref, contract_ref, created_at, updated_at
 		FROM crm_quotes WHERE id = $1
@@ -150,7 +152,7 @@ func (r *Repository) PatchQuote(ctx context.Context, id string, patch map[string
 	}
 	sets = append(sets, "updated_at = NOW()", "version = version + 1")
 	q := fmt.Sprintf("UPDATE crm_quotes SET %s WHERE id = $1", strings.Join(sets, ", "))
-	tag, err := r.pool.Exec(ctx, q, args...)
+	tag, err := r.db(ctx).Exec(ctx, q, args...)
 	if err != nil {
 		return models.Quote{}, err
 	}
@@ -185,10 +187,10 @@ func scanActivity(row pgx.Row) (models.Activity, error) {
 func (r *Repository) ListActivities(ctx context.Context, opts ListOpts) ([]models.Activity, int, error) {
 	opts.Limit = clampLimit(opts.Limit)
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_activities`).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_activities`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, created_at
 		FROM crm_activities ORDER BY occurred_at DESC LIMIT $1 OFFSET $2
 	`, opts.Limit, opts.Offset)
@@ -230,18 +232,20 @@ func (r *Repository) CreateActivity(ctx context.Context, in ActivityInput) (mode
 	}
 	accountID := in.AccountID
 	if accountID == "" && in.Account != "" {
-		var aid string
-		_ = r.pool.QueryRow(ctx, `SELECT id FROM crm_accounts WHERE name = $1 LIMIT 1`, in.Account).Scan(&aid)
-		accountID = aid
+		resolved, err := r.resolveAccountID(ctx, in.Account)
+		if err != nil {
+			return models.Activity{}, err
+		}
+		accountID = resolved
 	}
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_activities (id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
 	`, id, in.Type, in.Subject, in.Body, nullStr(accountID), in.Account, nullStr(in.ContactID), nullStr(in.DealID), nullStr(in.OutletRef), in.Owner, in.OccurredAt)
 	if err != nil {
 		return models.Activity{}, err
 	}
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, created_at
 		FROM crm_activities WHERE id = $1
 	`, id)
@@ -285,11 +289,11 @@ func (r *Repository) ListTickets(ctx context.Context, opts ListOpts) ([]models.T
 	}
 	whereSQL := strings.Join(where, " AND ")
 	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_tickets WHERE "+whereSQL, args...).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_tickets WHERE "+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	args = append(args, opts.Limit, opts.Offset)
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
 		       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
 		FROM crm_tickets WHERE `+whereSQL+` ORDER BY created_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
@@ -332,13 +336,15 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 	}
 	accountID := in.AccountID
 	if accountID == "" && in.Account != "" {
-		var aid string
-		_ = r.pool.QueryRow(ctx, `SELECT id FROM crm_accounts WHERE name = $1 LIMIT 1`, in.Account).Scan(&aid)
-		accountID = aid
+		resolved, err := r.resolveAccountID(ctx, in.Account)
+		if err != nil {
+			return models.Ticket{}, err
+		}
+		accountID = resolved
 	}
 	sla := time.Now().UTC().Add(24 * time.Hour)
 	now := time.Now().UTC()
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_tickets (id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type,
 			priority, channel, status, owner, description, sla_due_at, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'open',$11,$12,$13,$14,$14)
@@ -347,7 +353,7 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 	if err != nil {
 		return models.Ticket{}, err
 	}
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
 		       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
@@ -373,7 +379,7 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 		}
 	}
 	if len(sets) == 1 {
-		row := r.pool.QueryRow(ctx, `
+		row := r.db(ctx).QueryRow(ctx, `
 			SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
 			       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
 			FROM crm_tickets WHERE id = $1
@@ -381,11 +387,11 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 		return scanTicket(row)
 	}
 	args = append(args, id)
-	_, err := r.pool.Exec(ctx, `UPDATE crm_tickets SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
+	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_tickets SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
 	if err != nil {
 		return models.Ticket{}, err
 	}
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
 		       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
@@ -411,10 +417,10 @@ func scanCampaign(row pgx.Row) (models.Campaign, error) {
 func (r *Repository) ListCampaigns(ctx context.Context, opts ListOpts) ([]models.Campaign, int, error) {
 	opts.Limit = clampLimit(opts.Limit)
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_campaigns`).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_campaigns`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at
 		FROM crm_campaigns ORDER BY created_at DESC LIMIT $1 OFFSET $2
 	`, opts.Limit, opts.Offset)
@@ -450,14 +456,14 @@ func (r *Repository) CreateCampaign(ctx context.Context, in CampaignInput) (mode
 		return models.Campaign{}, err
 	}
 	now := time.Now().UTC()
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_campaigns (id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft',$10,$10)
 	`, id, in.Name, in.Type, in.Audience, in.StartsOn, in.EndsOn, nullFloat(in.BudgetUSD), in.Owner, in.Goal, now)
 	if err != nil {
 		return models.Campaign{}, err
 	}
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at
 		FROM crm_campaigns WHERE id = $1
 	`, id)

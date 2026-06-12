@@ -11,7 +11,7 @@ var PermissionModules = []string{
 	"accounts", "contacts", "leads", "deals", "quotes", "activities", "tickets",
 	"campaigns", "segments", "journeys", "personas", "events", "content", "email",
 	"social", "seo", "budget", "mqls", "loyalty", "bridge", "outlets", "exports",
-	"insights", "ai", "audit", "admin",
+	"insights", "ai", "integrations", "audit", "admin",
 }
 
 func PermissionDescriptors() []PermissionDescriptor {

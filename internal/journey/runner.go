@@ -80,12 +80,15 @@ func (r *Runner) processEnrollment(ctx context.Context, en store.JourneyEnrollme
 	}
 
 	detail, execErr := r.executeStep(ctx, en, step)
-	status := "ok"
 	if execErr != nil {
-		status = "error"
-		detail = execErr.Error()
+		// Halt the enrollment at the current step rather than advancing past a
+		// failed or unknown step (which would silently drop work and let the
+		// journey complete as if it had run). The step is logged for inspection
+		// and retried on the next tick once the journey config is fixed.
+		_ = r.Repo.LogJourneyStep(ctx, en.ID, step.ID, step.StepOrder, step.StepType, "error", execErr.Error())
+		return execErr
 	}
-	_ = r.Repo.LogJourneyStep(ctx, en.ID, step.ID, step.StepOrder, step.StepType, status, detail)
+	_ = r.Repo.LogJourneyStep(ctx, en.ID, step.ID, step.StepOrder, step.StepType, "ok", detail)
 
 	nextOrder := en.CurrentStep + 1
 	nextStep, nextErr := r.Repo.GetJourneyStepAtOrder(ctx, en.JourneyID, nextOrder)
@@ -140,7 +143,7 @@ func (r *Runner) executeStep(ctx context.Context, en store.JourneyEnrollment, st
 		}
 		return "no lead to score", nil
 	default:
-		return "unknown step type " + step.StepType, nil
+		return "", fmt.Errorf("unknown step type %q", step.StepType)
 	}
 }
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -33,6 +34,9 @@ func (h *API) GetAccount(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "get account failed")
 		return
 	}
+	if !enforceOwner(c, item.Owner) {
+		return
+	}
 	c.JSON(http.StatusOK, item)
 }
 
@@ -42,17 +46,24 @@ func (h *API) CreateAccount(c *gin.Context) {
 		badRequest(c, "name is required")
 		return
 	}
-	item, err := h.Repo.CreateAccount(c.Request.Context(), in)
-	if err != nil {
+	var item models.Account
+	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+		var e error
+		item, e = h.Repo.CreateAccount(ctx, in)
+		if e != nil {
+			return e
+		}
+		if h.Events != nil {
+			return h.Events.EnqueueCommercial(ctx, events.TypeAccountCreated, map[string]any{
+				"account_id": item.ID, "name": item.Name, "owner": item.Owner,
+			}, item.ID)
+		}
+		return nil
+	}); err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create account failed")
 		return
 	}
 	h.recordAudit(c, "AccountCreated", store.AuditDetail("account", item.ID, "created"))
-	if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), events.TypeAccountCreated, map[string]any{
-			"account_id": item.ID, "name": item.Name, "owner": item.Owner,
-		}, item.ID)
-	}
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -103,6 +114,9 @@ func (h *API) GetContact(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "get contact failed")
 		return
 	}
+	if !enforceOwner(c, item.Owner) {
+		return
+	}
 	c.JSON(http.StatusOK, item)
 }
 
@@ -112,16 +126,24 @@ func (h *API) CreateContact(c *gin.Context) {
 		badRequest(c, "name and email are required")
 		return
 	}
-	item, err := h.Repo.CreateContact(c.Request.Context(), in)
-	if err != nil {
+	var item models.Contact
+	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+		var e error
+		item, e = h.Repo.CreateContact(ctx, in)
+		if e != nil {
+			return e
+		}
+		if h.Events != nil {
+			return h.Events.EnqueueCommercial(ctx, events.TypeContactCreated, map[string]any{
+				"contact_id": item.ID, "name": item.Name, "account": item.Account,
+			}, item.ID)
+		}
+		return nil
+	}); err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create contact failed")
 		return
 	}
-	if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), events.TypeContactCreated, map[string]any{
-			"contact_id": item.ID, "name": item.Name, "account": item.Account,
-		}, item.ID)
-	}
+	h.recordAudit(c, "ContactCreated", store.AuditDetail("contact", item.ID, "created"))
 	_ = journey.AutoEnrollContact(c.Request.Context(), h.Repo, item.ID, item.Email, item.Name)
 	c.JSON(http.StatusCreated, item)
 }
@@ -164,6 +186,9 @@ func (h *API) GetLead(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "get lead failed")
 		return
 	}
+	if !enforceOwner(c, item.Owner) {
+		return
+	}
 	c.JSON(http.StatusOK, item)
 }
 
@@ -178,6 +203,7 @@ func (h *API) CreateLead(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create lead failed")
 		return
 	}
+	h.recordAudit(c, "LeadCreated", store.AuditDetail("lead", item.ID, "created"))
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -196,14 +222,27 @@ func (h *API) PatchLead(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "update lead failed")
 		return
 	}
+	h.recordAudit(c, "LeadUpdated", store.AuditDetail("lead", item.ID, "updated"))
 	c.JSON(http.StatusOK, item)
 }
 
 func (h *API) ConvertLead(c *gin.Context) {
 	var in store.DealInput
 	_ = c.ShouldBindJSON(&in)
-	item, err := h.Repo.ConvertLead(c.Request.Context(), c.Param("id"), in)
-	if err != nil {
+	var item models.Deal
+	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+		var e error
+		item, e = h.Repo.ConvertLead(ctx, c.Param("id"), in)
+		if e != nil {
+			return e
+		}
+		if h.Events != nil {
+			return h.Events.EnqueueCommercial(ctx, events.TypeLeadConverted, map[string]any{
+				"lead_id": c.Param("id"), "deal_id": item.ID,
+			}, item.ID)
+		}
+		return nil
+	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound(c)
 			return
@@ -212,11 +251,6 @@ func (h *API) ConvertLead(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, "LeadConverted", store.AuditDetail("lead", c.Param("id"), "converted to deal "+item.ID))
-	if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), events.TypeLeadConverted, map[string]any{
-			"lead_id": c.Param("id"), "deal_id": item.ID,
-		}, item.ID)
-	}
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -237,6 +271,9 @@ func (h *API) GetDeal(c *gin.Context) {
 			return
 		}
 		apierr.JSONStatus(c, http.StatusInternalServerError, "get deal failed")
+		return
+	}
+	if !enforceOwner(c, item.Owner) {
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -263,8 +300,22 @@ func (h *API) PatchDeal(c *gin.Context) {
 		badRequest(c, "invalid body")
 		return
 	}
-	item, err := h.Repo.PatchDeal(c.Request.Context(), c.Param("id"), patch)
-	if err != nil {
+	var item models.Deal
+	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+		var e error
+		item, e = h.Repo.PatchDeal(ctx, c.Param("id"), patch)
+		if e != nil {
+			return e
+		}
+		// The won path publishes after external finance booking, so it can't be
+		// part of this transaction; only the plain stage update is atomic here.
+		if item.Stage != models.DealStageWon && h.Events != nil {
+			return h.Events.EnqueueCommercial(ctx, events.TypeDealUpdated, map[string]any{
+				"deal_id": item.ID, "stage": item.Stage,
+			}, item.ID)
+		}
+		return nil
+	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound(c)
 			return
@@ -275,10 +326,6 @@ func (h *API) PatchDeal(c *gin.Context) {
 	h.recordAudit(c, "DealUpdated", store.AuditDetail("deal", item.ID, "updated"))
 	if item.Stage == models.DealStageWon {
 		item = h.finalizeDealWon(c, item)
-	} else if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), events.TypeDealUpdated, map[string]any{
-			"deal_id": item.ID, "stage": item.Stage,
-		}, item.ID)
 	}
 	c.JSON(http.StatusOK, item)
 }
@@ -291,8 +338,20 @@ func (h *API) SetDealStage(c *gin.Context) {
 		badRequest(c, "stage is required")
 		return
 	}
-	item, err := h.Repo.SetDealStage(c.Request.Context(), c.Param("id"), in.Stage)
-	if err != nil {
+	var item models.Deal
+	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+		var e error
+		item, e = h.Repo.SetDealStage(ctx, c.Param("id"), in.Stage)
+		if e != nil {
+			return e
+		}
+		if item.Stage != models.DealStageWon && h.Events != nil {
+			return h.Events.EnqueueCommercial(ctx, events.TypeDealUpdated, map[string]any{
+				"deal_id": item.ID, "stage": item.Stage,
+			}, item.ID)
+		}
+		return nil
+	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound(c)
 			return
@@ -303,10 +362,6 @@ func (h *API) SetDealStage(c *gin.Context) {
 	h.recordAudit(c, "DealStageChanged", store.AuditDetail("deal", item.ID, "stage="+in.Stage))
 	if item.Stage == models.DealStageWon {
 		item = h.finalizeDealWon(c, item)
-	} else if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), events.TypeDealUpdated, map[string]any{
-			"deal_id": item.ID, "stage": item.Stage,
-		}, item.ID)
 	}
 	c.JSON(http.StatusOK, item)
 }
@@ -342,6 +397,9 @@ func (h *API) GetQuote(c *gin.Context) {
 			return
 		}
 		apierr.JSONStatus(c, http.StatusInternalServerError, "get quote failed")
+		return
+	}
+	if !enforceOwner(c, item.Owner) {
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -386,6 +444,7 @@ func (h *API) CreateActivity(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create activity failed")
 		return
 	}
+	h.recordAudit(c, "ActivityCreated", store.AuditDetail("activity", item.ID, "created"))
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -404,17 +463,24 @@ func (h *API) CreateTicket(c *gin.Context) {
 		badRequest(c, "subject is required")
 		return
 	}
-	item, err := h.Repo.CreateTicket(c.Request.Context(), in)
-	if err != nil {
+	var item models.Ticket
+	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+		var e error
+		item, e = h.Repo.CreateTicket(ctx, in)
+		if e != nil {
+			return e
+		}
+		if h.Events != nil {
+			return h.Events.EnqueueCommercial(ctx, events.TypeTicketCreated, map[string]any{
+				"ticket_id": item.ID, "subject": item.Subject,
+			}, item.ID)
+		}
+		return nil
+	}); err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create ticket failed")
 		return
 	}
 	h.recordAudit(c, "TicketCreated", store.AuditDetail("ticket", item.ID, "created"))
-	if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), events.TypeTicketCreated, map[string]any{
-			"ticket_id": item.ID, "subject": item.Subject,
-		}, item.ID)
-	}
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -451,15 +517,22 @@ func (h *API) CreateCampaign(c *gin.Context) {
 		badRequest(c, "name is required")
 		return
 	}
-	item, err := h.Repo.CreateCampaign(c.Request.Context(), in)
-	if err != nil {
+	var item models.Campaign
+	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+		var e error
+		item, e = h.Repo.CreateCampaign(ctx, in)
+		if e != nil {
+			return e
+		}
+		if h.Events != nil {
+			return h.Events.EnqueueCommercial(ctx, events.TypeCampaignLaunched, map[string]any{
+				"campaign_id": item.ID, "name": item.Name,
+			}, item.ID)
+		}
+		return nil
+	}); err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create campaign failed")
 		return
-	}
-	if h.Events != nil {
-		h.Events.PublishCommercial(c.Request.Context(), events.TypeCampaignLaunched, map[string]any{
-			"campaign_id": item.ID, "name": item.Name,
-		}, item.ID)
 	}
 	c.JSON(http.StatusCreated, item)
 }

@@ -27,6 +27,8 @@ type Config struct {
 	FinanceAPIURL       string
 	DMSAPIURL           string
 	ContractsAPIURL     string
+	AIAPIURL            string
+	AIAudience          string
 	AutoMigrate         bool
 	SeedOnEmpty         bool
 	ServeUI             bool
@@ -69,6 +71,8 @@ func Load() (Config, error) {
 		FinanceAPIURL:       financeAPIURL(publicAPI, envOr("FINANCE_API_URL", "")),
 		DMSAPIURL:           dmsAPIURL(publicAPI, envOr("DMS_API_URL", "")),
 		ContractsAPIURL:     contractsAPIURL(publicAPI, envOr("CONTRACTS_API_URL", "")),
+		AIAPIURL:            aiAPIURL(publicAPI, envOr("AI_API_URL", "")),
+		AIAudience:          envOr("AI_AUDIENCE", "iag.ai-platform"),
 		AutoMigrate:         envOr("AUTO_MIGRATE", "true") != "false",
 		SeedOnEmpty:         envOr("SEED_ON_EMPTY", "true") != "false",
 		ServeUI:             envOr("SERVE_UI", "true") != "false",
@@ -160,6 +164,13 @@ func dmsAPIURL(publicAPI, explicit string) string {
 
 func contractsAPIURL(publicAPI, explicit string) string {
 	return serviceAPIURL(publicAPI, explicit, "http://localhost:8080/api/v1/contract-management", "/api/v1/contract-management")
+}
+
+// aiAPIURL resolves the shared iag-ai-platform base. When neither AI_API_URL nor
+// PUBLIC_API_URL is set it falls back to the service's local dev port. An empty
+// result disables the AI copilot client (it degrades to a deterministic reply).
+func aiAPIURL(publicAPI, explicit string) string {
+	return serviceAPIURL(publicAPI, explicit, "http://localhost:3007", "/api/v1/ai-platform")
 }
 
 func parseDuration(key string, fallback time.Duration) time.Duration {

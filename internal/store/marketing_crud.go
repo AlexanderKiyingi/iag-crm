@@ -15,7 +15,7 @@ func (r *Repository) GetGenericRow(ctx context.Context, table, cols, id string) 
 			SELECT id, %s, created_at, updated_at FROM %s WHERE id = $1
 		) x`, cols, table)
 	var raw string
-	if err := r.pool.QueryRow(ctx, q, id).Scan(&raw); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, q, id).Scan(&raw); err != nil {
 		return nil, err
 	}
 	var row map[string]any
@@ -48,7 +48,7 @@ func (r *Repository) PatchGenericRow(ctx context.Context, table string, id strin
 		return r.GetGenericRow(ctx, table, cols, id)
 	}
 	q := fmt.Sprintf("UPDATE %s SET %s WHERE id = $1", table, stringsJoin(sets, ", "))
-	tag, err := r.pool.Exec(ctx, q, args...)
+	tag, err := r.db(ctx).Exec(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func (r *Repository) PatchGenericRow(ctx context.Context, table string, id strin
 
 // DeleteGenericRow removes a marketing table row.
 func (r *Repository) DeleteGenericRow(ctx context.Context, table, id string) error {
-	tag, err := r.pool.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = $1", table), id)
+	tag, err := r.db(ctx).Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = $1", table), id)
 	if err != nil {
 		return err
 	}

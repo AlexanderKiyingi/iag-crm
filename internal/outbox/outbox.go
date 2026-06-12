@@ -54,7 +54,7 @@ func (s *Store) ClaimBatch(ctx context.Context, limit int, backoff time.Duration
 	rows, err := s.pool.Query(ctx, `
 		WITH due AS (
 			SELECT id FROM crm_event_outbox
-			WHERE dispatched_at IS NULL AND available_at <= NOW()
+			WHERE dispatched_at IS NULL AND abandoned_at IS NULL AND available_at <= NOW()
 			ORDER BY id
 			FOR UPDATE SKIP LOCKED
 			LIMIT $1
@@ -96,12 +96,24 @@ func (s *Store) MarkDispatched(ctx context.Context, id int64) error {
 	return err
 }
 
-func (s *Store) MarkFailed(ctx context.Context, id int64, attempts int, errMsg string, retryDelay time.Duration) error {
+func (s *Store) MarkFailed(ctx context.Context, id int64, errMsg string, retryDelay time.Duration) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE crm_event_outbox
 		SET last_error = $1, available_at = NOW() + $2::interval
 		WHERE id = $3
 	`, errMsg, fmt.Sprintf("%d milliseconds", retryDelay.Milliseconds()), id)
+	return err
+}
+
+// MarkAbandoned moves a row to the dead-letter state after it exhausts its retry
+// budget, so the publisher stops retrying it. The row is retained (not deleted)
+// with its last error for inspection.
+func (s *Store) MarkAbandoned(ctx context.Context, id int64, errMsg string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE crm_event_outbox
+		SET abandoned_at = NOW(), last_error = $1
+		WHERE id = $2
+	`, errMsg, id)
 	return err
 }
 
@@ -112,20 +124,22 @@ type Dispatcher interface {
 
 // Publisher periodically drains the outbox.
 type Publisher struct {
-	store      *Store
-	dispatcher Dispatcher
-	tick       time.Duration
-	batch      int
-	maxBackoff time.Duration
+	store       *Store
+	dispatcher  Dispatcher
+	tick        time.Duration
+	batch       int
+	maxBackoff  time.Duration
+	maxAttempts int
 }
 
 func NewPublisher(store *Store, d Dispatcher) *Publisher {
 	return &Publisher{
-		store:      store,
-		dispatcher: d,
-		tick:       2 * time.Second,
-		batch:      32,
-		maxBackoff: 5 * time.Minute,
+		store:       store,
+		dispatcher:  d,
+		tick:        2 * time.Second,
+		batch:       32,
+		maxBackoff:  5 * time.Minute,
+		maxAttempts: 12,
 	}
 }
 
@@ -161,8 +175,16 @@ func (p *Publisher) drainOnce(ctx context.Context) (int, error) {
 	}
 	for _, r := range rows {
 		if err := p.dispatcher.DispatchOutbox(ctx, r); err != nil {
+			if r.Attempts >= p.maxAttempts {
+				if mErr := p.store.MarkAbandoned(ctx, r.ID, err.Error()); mErr != nil {
+					slog.Warn("outbox mark-abandoned", "id", r.ID, "err", mErr)
+				}
+				slog.Error("outbox event abandoned after max attempts", "id", r.ID,
+					"type", r.EventType, "attempts", r.Attempts, "maxAttempts", p.maxAttempts, "err", err)
+				continue
+			}
 			delay := backoffFor(r.Attempts, p.maxBackoff)
-			if mErr := p.store.MarkFailed(ctx, r.ID, r.Attempts, err.Error(), delay); mErr != nil {
+			if mErr := p.store.MarkFailed(ctx, r.ID, err.Error(), delay); mErr != nil {
 				slog.Warn("outbox mark-failed", "id", r.ID, "err", mErr)
 			}
 			slog.Warn("outbox dispatch failed", "id", r.ID, "type", r.EventType,
@@ -194,12 +216,22 @@ func WithTx(ctx context.Context, tx pgx.Tx) context.Context {
 }
 
 func txExecOr(ctx context.Context, pool *pgxpool.Pool) execer {
-	if v := ctx.Value(txKey{}); v != nil {
-		if tx, ok := v.(pgx.Tx); ok && tx != nil {
-			return tx
-		}
+	if tx, ok := TxFrom(ctx); ok {
+		return tx
 	}
 	return pool
+}
+
+// TxFrom returns the transaction stored in ctx by WithTx, if any. It lets other
+// packages (e.g. the store's unit-of-work helper) share the same transaction so
+// a domain write and its outbox enqueue commit atomically.
+func TxFrom(ctx context.Context) (pgx.Tx, bool) {
+	if v := ctx.Value(txKey{}); v != nil {
+		if tx, ok := v.(pgx.Tx); ok && tx != nil {
+			return tx, true
+		}
+	}
+	return nil, false
 }
 
 type execer interface {

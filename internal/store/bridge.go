@@ -8,7 +8,7 @@ import (
 )
 
 func (r *Repository) ListBridgeStreams(ctx context.Context) ([]map[string]any, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id, name, direction, status, last_sync_at, record_count FROM crm_bridge_streams ORDER BY name`)
+	rows, err := r.db(ctx).Query(ctx, `SELECT id, name, direction, status, last_sync_at, record_count FROM crm_bridge_streams ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func (r *Repository) ListBridgeStreams(ctx context.Context) ([]map[string]any, e
 }
 
 func (r *Repository) AssignPendingImport(ctx context.Context, id, owner string) (map[string]any, error) {
-	tag, err := r.pool.Exec(ctx, `
+	tag, err := r.db(ctx).Exec(ctx, `
 		UPDATE crm_bridge_pending_imports
 		SET assigned_owner = $2, status = 'assigned'
 		WHERE id = $1 AND status = 'pending'
@@ -41,7 +41,7 @@ func (r *Repository) AssignPendingImport(ctx context.Context, id, owner string) 
 	if tag.RowsAffected() == 0 {
 		return nil, pgx.ErrNoRows
 	}
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, dms_outlet_id, channel, beat, assigned_owner, status, created_at
 		FROM crm_bridge_pending_imports WHERE id = $1
 	`, id)
@@ -58,8 +58,8 @@ func (r *Repository) AssignPendingImport(ctx context.Context, id, owner string) 
 
 func (r *Repository) ListPendingImports(ctx context.Context) ([]map[string]any, int, error) {
 	var total int
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_bridge_pending_imports WHERE status = 'pending'`).Scan(&total)
-	rows, err := r.pool.Query(ctx, `
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_bridge_pending_imports WHERE status = 'pending'`).Scan(&total)
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, dms_outlet_id, channel, beat, assigned_owner, status, created_at
 		FROM crm_bridge_pending_imports WHERE status = 'pending' ORDER BY created_at DESC LIMIT 50
 	`)
@@ -83,7 +83,7 @@ func (r *Repository) ListPendingImports(ctx context.Context) ([]map[string]any, 
 }
 
 func (r *Repository) ListFieldMappings(ctx context.Context) ([]map[string]any, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id, stream_id, dms_field, crm_field, transform FROM crm_bridge_field_mappings ORDER BY stream_id`)
+	rows, err := r.db(ctx).Query(ctx, `SELECT id, stream_id, dms_field, crm_field, transform FROM crm_bridge_field_mappings ORDER BY stream_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (r *Repository) ListSyncLog(ctx context.Context, limit int) ([]map[string]a
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, stream_id, level, message, created_at FROM crm_bridge_sync_log ORDER BY created_at DESC LIMIT $1
 	`, limit)
 	if err != nil {
@@ -131,7 +131,7 @@ func (r *Repository) ListOutlets(ctx context.Context, opts ListOpts) ([]map[stri
 }
 
 func (r *Repository) GetOutlet360(ctx context.Context, id string) (map[string]any, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT o.id, o.name, o.dms_ref, o.city, o.segment, o.health, o.owner, a.name
 		FROM crm_outlets o
 		LEFT JOIN crm_accounts a ON a.id = o.account_id
@@ -164,7 +164,7 @@ func (r *Repository) ListExportCustomers(ctx context.Context, opts ListOpts) ([]
 
 func (r *Repository) CreateExportCustomer(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "EXP", 100)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_export_customers (id, name, country, currency, incoterms, credit_limit, erp_ref, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
 	`, id, str(in, "name"), str(in, "country"), str(in, "currency"), str(in, "incoterms"), num(in, "credit_limit"), str(in, "erp_ref"))
@@ -175,7 +175,7 @@ func (r *Repository) CreateExportCustomer(ctx context.Context, in map[string]any
 }
 
 func (r *Repository) ListLoyaltyTiers(ctx context.Context) ([]map[string]any, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id, name, min_points, benefits, multiplier FROM crm_loyalty_tiers ORDER BY min_points`)
+	rows, err := r.db(ctx).Query(ctx, `SELECT id, name, min_points, benefits, multiplier FROM crm_loyalty_tiers ORDER BY min_points`)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +199,7 @@ func (r *Repository) ListLoyaltyOutlets(ctx context.Context, opts ListOpts) ([]m
 
 func (r *Repository) CreateLoyaltyPromotion(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "PRM", 100)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_loyalty_promotions (id, name, tier_id, discount, status, created_at)
 		VALUES ($1,$2,$3,$4,'draft',NOW())
 	`, id, str(in, "name"), str(in, "tier_id"), str(in, "discount"))
@@ -212,14 +212,14 @@ func (r *Repository) CreateLoyaltyPromotion(ctx context.Context, in map[string]a
 func (r *Repository) InsightsSummary(ctx context.Context) (map[string]any, error) {
 	var atRisk int
 	var exposure float64
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_accounts WHERE status IN ('risk','nurture')`).Scan(&atRisk)
-	_ = r.pool.QueryRow(ctx, `
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_accounts WHERE status IN ('risk','nurture')`).Scan(&atRisk)
+	_ = r.db(ctx).QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0) FROM crm_deals d
 		JOIN crm_accounts a ON a.id = d.account_id
 		WHERE a.status IN ('risk','nurture') AND d.stage NOT IN ('won','lost')
 	`).Scan(&exposure)
 	var won, total int
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE stage='won'), COUNT(*) FROM crm_deals WHERE stage IN ('won','lost')`).Scan(&won, &total)
+	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE stage='won'), COUNT(*) FROM crm_deals WHERE stage IN ('won','lost')`).Scan(&won, &total)
 	retention := 0
 	if total > 0 {
 		retention = won * 100 / total
@@ -233,7 +233,7 @@ func (r *Repository) InsightsSummary(ctx context.Context) (map[string]any, error
 }
 
 func (r *Repository) AISuggestions(ctx context.Context) ([]map[string]any, error) {
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, name, account_name, stage, amount FROM crm_deals
 		WHERE stage IN ('negotiation','proposal') ORDER BY amount DESC LIMIT 5
 	`)

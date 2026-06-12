@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -224,7 +226,11 @@ func (h *API) GetBrandKit(c *gin.Context) {
 }
 
 func (h *API) DemandGenMetrics(c *gin.Context) {
-	m, _ := h.Repo.DemandGenMetrics(c.Request.Context())
+	m, err := h.Repo.DemandGenMetrics(c.Request.Context())
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "demand gen metrics failed")
+		return
+	}
 	c.JSON(http.StatusOK, m)
 }
 
@@ -313,12 +319,20 @@ func (h *API) CreateLoyaltyPromotion(c *gin.Context) {
 }
 
 func (h *API) InsightsSummary(c *gin.Context) {
-	s, _ := h.Repo.InsightsSummary(c.Request.Context())
+	s, err := h.Repo.InsightsSummary(c.Request.Context())
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "insights summary failed")
+		return
+	}
 	c.JSON(http.StatusOK, s)
 }
 
 func (h *API) AISuggestions(c *gin.Context) {
-	items, _ := h.Repo.AISuggestions(c.Request.Context())
+	items, err := h.Repo.AISuggestions(c.Request.Context())
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "ai suggestions failed")
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"suggestions": items})
 }
 
@@ -326,9 +340,17 @@ func (h *API) AICopilotChat(c *gin.Context) {
 	var in struct {
 		Message string `json:"message"`
 	}
-	_ = c.ShouldBindJSON(&in)
+	if err := c.ShouldBindJSON(&in); err != nil {
+		badRequest(c, "invalid body")
+		return
+	}
+	in.Message = strings.TrimSpace(in.Message)
+	if in.Message == "" {
+		badRequest(c, "message is required")
+		return
+	}
+
 	suggestions, _ := h.Repo.AISuggestions(c.Request.Context())
-	reply := "Review your top negotiation-stage deals for follow-ups this week."
 	actions := []map[string]any{}
 	for _, s := range suggestions {
 		if id, ok := s["deal_id"].(string); ok {
@@ -338,7 +360,38 @@ func (h *API) AICopilotChat(c *gin.Context) {
 	if len(actions) == 0 {
 		actions = append(actions, map[string]any{"label": "Open pipeline", "page": "deals"})
 	}
+
+	// Deterministic fallback used when the shared AI platform is not configured
+	// or the call fails, so the copilot always returns something useful.
+	reply := "Review your top negotiation-stage deals for follow-ups this week."
+	if h.AI != nil && h.AI.Enabled() {
+		if answer, err := h.AI.Complete(c.Request.Context(), copilotSystemPrompt(suggestions), in.Message, 512); err != nil {
+			slog.Warn("ai copilot completion failed; using fallback reply", "err", err)
+		} else if answer != "" {
+			reply = answer
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"reply": reply, "actions": actions})
+}
+
+// copilotSystemPrompt grounds the model in the caller's live CRM context so the
+// reply references real pipeline data rather than generic advice.
+func copilotSystemPrompt(suggestions []map[string]any) string {
+	var b strings.Builder
+	b.WriteString("You are the IAG CRM sales copilot. Answer concisely (2-4 sentences) and be action-oriented for a B2B sales team. ")
+	if len(suggestions) > 0 {
+		b.WriteString("Current pipeline signals you may reference:\n")
+		for i, s := range suggestions {
+			if i >= 8 {
+				break
+			}
+			title, _ := s["title"].(string)
+			if title != "" {
+				b.WriteString("- " + title + "\n")
+			}
+		}
+	}
+	return b.String()
 }
 
 func genericGet(c *gin.Context, fn func(ctx *gin.Context, id string) (map[string]any, error)) {
@@ -552,6 +605,9 @@ func (h *API) GetAccount360(c *gin.Context) {
 	acct, err := h.Repo.GetAccount(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		notFound(c)
+		return
+	}
+	if !enforceOwner(c, acct.Owner) {
 		return
 	}
 	deals, _, _ := h.Repo.ListDeals(c.Request.Context(), store.ListOpts{Limit: 10, Search: acct.Name})

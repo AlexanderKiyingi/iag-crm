@@ -233,13 +233,13 @@ func registerAuditRoutes(v1 *gin.RouterGroup, api *handlers.API) {
 }
 
 func registerIntegrationRoutes(v1 *gin.RouterGroup, api *handlers.API) {
-	v1.GET("/integrations/status", auth.RequirePerm("activities.read"), api.IntegrationsStatus)
-	v1.GET("/integrations/connections", auth.RequirePerm("activities.read"), api.ListIntegrations)
-	v1.DELETE("/integrations/connections/:provider", auth.RequirePerm("activities.update"), api.DeleteIntegration)
-	v1.GET("/integrations/oauth/:provider/start", auth.RequirePerm("activities.update"), api.IntegrationOAuthStart)
+	v1.GET("/integrations/status", auth.RequirePerm("integrations.read"), api.IntegrationsStatus)
+	v1.GET("/integrations/connections", auth.RequirePerm("integrations.read"), api.ListIntegrations)
+	v1.DELETE("/integrations/connections/:provider", auth.RequirePerm("integrations.update"), api.DeleteIntegration)
+	v1.GET("/integrations/oauth/:provider/start", auth.RequirePerm("integrations.update"), api.IntegrationOAuthStart)
 	v1.GET("/integrations/oauth/:provider/callback", api.IntegrationOAuthCallback)
-	v1.POST("/integrations/calendar/sync", auth.RequirePerm("activities.update"), api.SyncCalendar)
-	v1.POST("/integrations/email/sync", auth.RequirePerm("activities.update"), api.SyncEmail)
+	v1.POST("/integrations/calendar/sync", auth.RequirePerm("integrations.update"), api.SyncCalendar)
+	v1.POST("/integrations/email/sync", auth.RequirePerm("integrations.update"), api.SyncEmail)
 }
 
 func registerAdminRoutes(v1 *gin.RouterGroup, api *handlers.API) {

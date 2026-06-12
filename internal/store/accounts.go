@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,25 @@ import (
 
 	"github.com/iag/crm/backend/internal/models"
 )
+
+// resolveAccountID looks up an account id by exact name. It returns ("", nil)
+// when no account matches, so the caller stores a null FK; a real query error is
+// propagated instead of being silently swallowed into a dangling reference.
+func (r *Repository) resolveAccountID(ctx context.Context, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	var id string
+	err := r.db(ctx).QueryRow(ctx, `SELECT id FROM crm_accounts WHERE name = $1 LIMIT 1`, name).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve account by name: %w", err)
+	}
+	return id, nil
+}
 
 type Repository struct {
 	pool     *pgxpool.Pool
@@ -31,13 +51,13 @@ func (r *Repository) Ping(ctx context.Context) error {
 
 func (r *Repository) IsEmpty(ctx context.Context) (bool, error) {
 	var n int
-	err := r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_accounts`).Scan(&n)
+	err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_accounts`).Scan(&n)
 	return n == 0, err
 }
 
 func (r *Repository) NextID(ctx context.Context, prefix string, start int64) (string, error) {
 	var n int64
-	err := r.pool.QueryRow(ctx, `
+	err := r.db(ctx).QueryRow(ctx, `
 		INSERT INTO crm_id_counters (prefix, next_value)
 		VALUES ($1, $2)
 		ON CONFLICT (prefix) DO UPDATE SET next_value = crm_id_counters.next_value + 1
@@ -133,12 +153,12 @@ func (r *Repository) ListAccounts(ctx context.Context, opts ListOpts) ([]models.
 	whereSQL := strings.Join(where, " AND ")
 
 	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_accounts WHERE "+whereSQL, args...).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_accounts WHERE "+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	args = append(args, opts.Limit, opts.Offset)
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, name, account_type, country, segment, owner, value_display,
 		       value_amount, value_currency, health_score, status, dms_bridged,
 		       COALESCE(dms_ref, ''), COALESCE(email, ''), COALESCE(phone, ''), COALESCE(address, ''),
@@ -165,7 +185,7 @@ func (r *Repository) ListAccounts(ctx context.Context, opts ListOpts) ([]models.
 }
 
 func (r *Repository) GetAccount(ctx context.Context, id string) (models.Account, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, name, account_type, country, segment, owner, value_display,
 		       value_amount, value_currency, health_score, status, dms_bridged,
 		       COALESCE(dms_ref, ''), COALESCE(email, ''), COALESCE(phone, ''), COALESCE(address, ''),
@@ -209,7 +229,7 @@ func (r *Repository) CreateAccount(ctx context.Context, in AccountInput) (models
 	if in.Type == "" {
 		in.Type = "Export"
 	}
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_accounts (
 			id, name, account_type, country, segment, owner, value_display,
 			value_amount, value_currency, health_score, status, dms_bridged,
@@ -275,7 +295,7 @@ func (r *Repository) PatchAccount(ctx context.Context, id string, patch map[stri
 		return r.GetAccount(ctx, id)
 	}
 	args = append(args, id)
-	_, err := r.pool.Exec(ctx, `UPDATE crm_accounts SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
+	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_accounts SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
 	if err != nil {
 		return models.Account{}, err
 	}
@@ -283,7 +303,7 @@ func (r *Repository) PatchAccount(ctx context.Context, id string, patch map[stri
 }
 
 func (r *Repository) DeleteAccount(ctx context.Context, id string) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM crm_accounts WHERE id = $1`, id)
+	_, err := r.db(ctx).Exec(ctx, `DELETE FROM crm_accounts WHERE id = $1`, id)
 	return err
 }
 
@@ -320,11 +340,11 @@ func (r *Repository) ListContacts(ctx context.Context, opts ListOpts) ([]models.
 	}
 	whereSQL := strings.Join(where, " AND ")
 	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_contacts WHERE "+whereSQL, args...).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_contacts WHERE "+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	args = append(args, opts.Limit, opts.Offset)
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, created_at, updated_at
 		FROM crm_contacts WHERE `+whereSQL+` ORDER BY name LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
@@ -343,7 +363,7 @@ func (r *Repository) ListContacts(ctx context.Context, opts ListOpts) ([]models.
 }
 
 func (r *Repository) GetContact(ctx context.Context, id string) (models.Contact, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, created_at, updated_at
 		FROM crm_contacts WHERE id = $1
 	`, id)
@@ -370,14 +390,14 @@ func (r *Repository) CreateContact(ctx context.Context, in ContactInput) (models
 	accountID := in.AccountID
 	accountName := in.Account
 	if accountID == "" && accountName != "" {
-		var aid string
-		err := r.pool.QueryRow(ctx, `SELECT id FROM crm_accounts WHERE name = $1 LIMIT 1`, accountName).Scan(&aid)
-		if err == nil {
-			accountID = aid
+		aid, err := r.resolveAccountID(ctx, accountName)
+		if err != nil {
+			return models.Contact{}, err
 		}
+		accountID = aid
 	}
 	now := time.Now().UTC()
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_contacts (id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
 	`, id, nullStr(accountID), accountName, in.Name, in.Title, in.Email, in.Phone, in.BuyerRole, in.Owner, in.Primary, now)
@@ -388,7 +408,7 @@ func (r *Repository) CreateContact(ctx context.Context, in ContactInput) (models
 }
 
 func (r *Repository) DeleteContact(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM crm_contacts WHERE id = $1`, id)
+	tag, err := r.db(ctx).Exec(ctx, `DELETE FROM crm_contacts WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -417,7 +437,7 @@ func (r *Repository) PatchContact(ctx context.Context, id string, patch map[stri
 	}
 	sets = append(sets, "updated_at = NOW()")
 	q := fmt.Sprintf("UPDATE crm_contacts SET %s WHERE id = $1", strings.Join(sets, ", "))
-	tag, err := r.pool.Exec(ctx, q, args...)
+	tag, err := r.db(ctx).Exec(ctx, q, args...)
 	if err != nil {
 		return models.Contact{}, err
 	}

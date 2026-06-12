@@ -189,6 +189,26 @@ func (b *Bus) PublishCommercial(ctx context.Context, eventType string, data map[
 	}
 }
 
+// EnqueueCommercial writes the event to the transactional outbox, joining any
+// transaction carried on ctx (via outbox.WithTx) so the event row commits
+// atomically with the caller's domain write. The returned error MUST be
+// propagated so the transaction rolls back when the enqueue fails. When the
+// outbox is disabled it falls back to a best-effort direct publish and never
+// returns an error — Kafka availability must not fail a domain write.
+func (b *Bus) EnqueueCommercial(ctx context.Context, eventType string, data map[string]any, key string) error {
+	if !b.enabled {
+		return nil
+	}
+	evt := finalizeEvent(PlatformEvent{Type: eventType, Data: data})
+	if b.store != nil {
+		return b.store.Enqueue(ctx, eventType, eventKey(key, evt), evt)
+	}
+	if err := b.publish(ctx, evt, key); err != nil {
+		slog.Warn("crm event publish failed", "type", eventType, "err", err)
+	}
+	return nil
+}
+
 func ParseBrokers(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
