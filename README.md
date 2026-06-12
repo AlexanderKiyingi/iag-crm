@@ -24,10 +24,9 @@ With platform stack: `docker compose up crm` from `deploy/` (registers gateway r
 
 ## Next.js integration
 
-```bash
-# .env.local
-NEXT_PUBLIC_CRM_API_URL=http://localhost:8080/api/v1/crm/v1
-```
+Full guide: [docs/FRONTEND_INTEGRATION.md](docs/FRONTEND_INTEGRATION.md) (auth, bootstrap, permissions, route catalog, SSE, OAuth).
+
+Copy [docs/frontend.env.example](docs/frontend.env.example) to your Next.js app as `.env.local`.
 
 Obtain a user token from `POST /api/v1/authentication/oauth/token` (aud includes `iag.gateway`), then:
 
