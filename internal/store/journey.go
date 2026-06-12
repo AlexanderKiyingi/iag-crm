@@ -36,7 +36,7 @@ type JourneyEnrollment struct {
 }
 
 func (r *Repository) ListJourneySteps(ctx context.Context, journeyID string) ([]JourneyStep, error) {
-	rows, err := r.db(ctx).Query(ctx, `
+	rows, err := r.pool.Query(ctx, `
 		SELECT id, journey_id, step_order, step_type, title, config, delay_hours
 		FROM crm_journey_steps WHERE journey_id = $1 ORDER BY step_order
 	`, journeyID)
@@ -65,7 +65,7 @@ func (r *Repository) CreateJourneyStep(ctx context.Context, journeyID string, in
 	order := intNum(in, "step_order")
 	if order <= 0 {
 		var max int
-		_ = r.db(ctx).QueryRow(ctx, `SELECT COALESCE(MAX(step_order), 0) FROM crm_journey_steps WHERE journey_id = $1`, journeyID).Scan(&max)
+		_ = r.pool.QueryRow(ctx, `SELECT COALESCE(MAX(step_order), 0) FROM crm_journey_steps WHERE journey_id = $1`, journeyID).Scan(&max)
 		order = max + 1
 	}
 	stepType := str(in, "step_type")
@@ -73,7 +73,7 @@ func (r *Repository) CreateJourneyStep(ctx context.Context, journeyID string, in
 		stepType = "wait"
 	}
 	cfg, _ := json.Marshal(in["config"])
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err = r.pool.Exec(ctx, `
 		INSERT INTO crm_journey_steps (id, journey_id, step_order, step_type, title, config, delay_hours, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,NOW(),NOW())
 	`, id, journeyID, order, stepType, str(in, "title"), cfg, intNum(in, "delay_hours"))
@@ -99,7 +99,7 @@ func (r *Repository) SeedJourneyStepsIfEmpty(ctx context.Context, journeyID stri
 	// violates the journey_id FK (23503), so skip until the journey exists —
 	// seed.Run calls this again right after creating the journeys.
 	var parentExists bool
-	if err := r.db(ctx).QueryRow(ctx,
+	if err := r.pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM crm_journeys WHERE id = $1)`, journeyID).Scan(&parentExists); err != nil {
 		return err
 	}
@@ -108,13 +108,13 @@ func (r *Repository) SeedJourneyStepsIfEmpty(ctx context.Context, journeyID stri
 	}
 
 	var n int
-	_ = r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_journey_steps WHERE journey_id = $1`, journeyID).Scan(&n)
+	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_journey_steps WHERE journey_id = $1`, journeyID).Scan(&n)
 	if n > 0 {
 		return nil
 	}
 	for _, s := range steps {
 		cfg, _ := json.Marshal(s.Config)
-		_, err := r.db(ctx).Exec(ctx, `
+		_, err := r.pool.Exec(ctx, `
 			INSERT INTO crm_journey_steps (id, journey_id, step_order, step_type, title, config, delay_hours, created_at, updated_at)
 			VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,NOW(),NOW())
 		`, s.ID, journeyID, s.StepOrder, s.StepType, s.Title, cfg, s.DelayHours)
@@ -127,7 +127,7 @@ func (r *Repository) SeedJourneyStepsIfEmpty(ctx context.Context, journeyID stri
 
 func (r *Repository) ListActiveJourneysByTrigger(ctx context.Context, triggerHint string) ([]string, error) {
 	hint := strings.ToLower(strings.TrimSpace(triggerHint))
-	rows, err := r.db(ctx).Query(ctx, `
+	rows, err := r.pool.Query(ctx, `
 		SELECT id FROM crm_journeys WHERE status = 'active' AND LOWER(trigger) LIKE '%' || $1 || '%'
 	`, hint)
 	if err != nil {
@@ -163,7 +163,7 @@ func (r *Repository) EnrollInJourney(ctx context.Context, journeyID string, in E
 		return JourneyEnrollment{}, err
 	}
 	now := time.Now().UTC()
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err = r.pool.Exec(ctx, `
 		INSERT INTO crm_journey_enrollments (
 			id, journey_id, contact_id, lead_id, subject_email, subject_name,
 			status, current_step, next_run_at, enrolled_at, updated_at
@@ -172,14 +172,14 @@ func (r *Repository) EnrollInJourney(ctx context.Context, journeyID string, in E
 	if err != nil {
 		return JourneyEnrollment{}, err
 	}
-	_, _ = r.db(ctx).Exec(ctx, `UPDATE crm_journeys SET enrolled = enrolled + 1, updated_at = NOW() WHERE id = $1`, journeyID)
+	_, _ = r.pool.Exec(ctx, `UPDATE crm_journeys SET enrolled = enrolled + 1, updated_at = NOW() WHERE id = $1`, journeyID)
 	return r.GetJourneyEnrollment(ctx, id)
 }
 
 func (r *Repository) GetJourneyEnrollment(ctx context.Context, id string) (JourneyEnrollment, error) {
 	var e JourneyEnrollment
 	var contactID, leadID *string
-	err := r.db(ctx).QueryRow(ctx, `
+	err := r.pool.QueryRow(ctx, `
 		SELECT id, journey_id, contact_id, lead_id, subject_email, subject_name,
 		       status, current_step, next_run_at, enrolled_at
 		FROM crm_journey_enrollments WHERE id = $1
@@ -198,7 +198,7 @@ func (r *Repository) ListJourneyEnrollments(ctx context.Context, journeyID strin
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := r.db(ctx).Query(ctx, `
+	rows, err := r.pool.Query(ctx, `
 		SELECT id, journey_id, contact_id, lead_id, subject_email, subject_name,
 		       status, current_step, next_run_at, enrolled_at
 		FROM crm_journey_enrollments
@@ -231,7 +231,7 @@ func (r *Repository) ListJourneyEnrollments(ctx context.Context, journeyID strin
 func (r *Repository) GetActiveEnrollment(ctx context.Context, journeyID, contactID, leadID string) (JourneyEnrollment, error) {
 	var e JourneyEnrollment
 	var cid, lid *string
-	err := r.db(ctx).QueryRow(ctx, `
+	err := r.pool.QueryRow(ctx, `
 		SELECT id, journey_id, contact_id, lead_id, subject_email, subject_name,
 		       status, current_step, next_run_at, enrolled_at
 		FROM crm_journey_enrollments
@@ -259,7 +259,7 @@ func (r *Repository) ClaimDueEnrollments(ctx context.Context, limit int) ([]Jour
 	if limit <= 0 {
 		limit = 32
 	}
-	rows, err := r.db(ctx).Query(ctx, `
+	rows, err := r.pool.Query(ctx, `
 		UPDATE crm_journey_enrollments e
 		SET next_run_at = NOW() + INTERVAL '5 minutes', updated_at = NOW()
 		FROM (
@@ -299,7 +299,7 @@ func (r *Repository) ClaimDueEnrollments(ctx context.Context, limit int) ([]Jour
 func (r *Repository) GetJourneyStepAtOrder(ctx context.Context, journeyID string, order int) (JourneyStep, error) {
 	var s JourneyStep
 	var cfg []byte
-	err := r.db(ctx).QueryRow(ctx, `
+	err := r.pool.QueryRow(ctx, `
 		SELECT id, journey_id, step_order, step_type, title, config, delay_hours
 		FROM crm_journey_steps WHERE journey_id = $1 AND step_order = $2
 	`, journeyID, order).Scan(&s.ID, &s.JourneyID, &s.StepOrder, &s.StepType, &s.Title, &cfg, &s.DelayHours)
@@ -312,7 +312,7 @@ func (r *Repository) GetJourneyStepAtOrder(ctx context.Context, journeyID string
 
 func (r *Repository) AdvanceEnrollment(ctx context.Context, enrollmentID string, nextStep int, delayHours int, completed bool) error {
 	if completed {
-		_, err := r.db(ctx).Exec(ctx, `
+		_, err := r.pool.Exec(ctx, `
 			UPDATE crm_journey_enrollments
 			SET status = 'completed', completed_at = NOW(), updated_at = NOW()
 			WHERE id = $1
@@ -320,7 +320,7 @@ func (r *Repository) AdvanceEnrollment(ctx context.Context, enrollmentID string,
 		return err
 	}
 	nextRun := time.Now().UTC().Add(time.Duration(delayHours) * time.Hour)
-	_, err := r.db(ctx).Exec(ctx, `
+	_, err := r.pool.Exec(ctx, `
 		UPDATE crm_journey_enrollments
 		SET current_step = $2, next_run_at = $3, updated_at = NOW()
 		WHERE id = $1
@@ -329,7 +329,7 @@ func (r *Repository) AdvanceEnrollment(ctx context.Context, enrollmentID string,
 }
 
 func (r *Repository) LogJourneyStep(ctx context.Context, enrollmentID, stepID string, order int, stepType, status, detail string) error {
-	_, err := r.db(ctx).Exec(ctx, `
+	_, err := r.pool.Exec(ctx, `
 		INSERT INTO crm_journey_step_logs (enrollment_id, step_id, step_order, step_type, status, detail)
 		VALUES ($1,$2,$3,$4,$5,$6)
 	`, enrollmentID, nullStr(stepID), order, stepType, status, detail)
@@ -337,7 +337,7 @@ func (r *Repository) LogJourneyStep(ctx context.Context, enrollmentID, stepID st
 }
 
 func (r *Repository) BumpJourneyConversion(ctx context.Context, journeyID string) error {
-	_, err := r.db(ctx).Exec(ctx, `
+	_, err := r.pool.Exec(ctx, `
 		UPDATE crm_journeys SET
 			conversion = CASE WHEN enrolled > 0
 				THEN LEAST(100, conversion + (100.0 / GREATEST(enrolled, 1)))
@@ -349,7 +349,7 @@ func (r *Repository) BumpJourneyConversion(ctx context.Context, journeyID string
 }
 
 func (r *Repository) ActivateJourney(ctx context.Context, journeyID string) error {
-	tag, err := r.db(ctx).Exec(ctx, `UPDATE crm_journeys SET status = 'active', updated_at = NOW() WHERE id = $1`, journeyID)
+	tag, err := r.pool.Exec(ctx, `UPDATE crm_journeys SET status = 'active', updated_at = NOW() WHERE id = $1`, journeyID)
 	if err != nil {
 		return err
 	}
