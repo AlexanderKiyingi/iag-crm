@@ -42,7 +42,7 @@ func (h *API) GetAccount(c *gin.Context) {
 
 func (h *API) CreateAccount(c *gin.Context) {
 	var in store.AccountInput
-	if err := c.ShouldBindJSON(&in); err != nil || in.Name == "" {
+	if err := bindJSONCoerced(c, &in); err != nil || in.Name == "" {
 		badRequest(c, "name is required")
 		return
 	}
@@ -122,7 +122,7 @@ func (h *API) GetContact(c *gin.Context) {
 
 func (h *API) CreateContact(c *gin.Context) {
 	var in store.ContactInput
-	if err := c.ShouldBindJSON(&in); err != nil || in.Name == "" || in.Email == "" {
+	if err := bindJSONCoerced(c, &in); err != nil || in.Name == "" || in.Email == "" {
 		badRequest(c, "name and email are required")
 		return
 	}
@@ -194,7 +194,7 @@ func (h *API) GetLead(c *gin.Context) {
 
 func (h *API) CreateLead(c *gin.Context) {
 	var in store.LeadInput
-	if err := c.ShouldBindJSON(&in); err != nil || in.Name == "" || in.Email == "" {
+	if err := bindJSONCoerced(c, &in); err != nil || in.Name == "" || in.Email == "" {
 		badRequest(c, "name and email are required")
 		return
 	}
@@ -228,7 +228,7 @@ func (h *API) PatchLead(c *gin.Context) {
 
 func (h *API) ConvertLead(c *gin.Context) {
 	var in store.DealInput
-	_ = c.ShouldBindJSON(&in)
+	_ = bindJSONCoerced(c, &in)
 	var item models.Deal
 	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
 		var e error
@@ -281,7 +281,7 @@ func (h *API) GetDeal(c *gin.Context) {
 
 func (h *API) CreateDeal(c *gin.Context) {
 	var in store.DealInput
-	if err := c.ShouldBindJSON(&in); err != nil || in.Name == "" {
+	if err := bindJSONCoerced(c, &in); err != nil || in.Name == "" {
 		badRequest(c, "name is required")
 		return
 	}
@@ -377,7 +377,7 @@ func (h *API) ListQuotes(c *gin.Context) {
 
 func (h *API) CreateQuote(c *gin.Context) {
 	var in store.QuoteInput
-	if err := c.ShouldBindJSON(&in); err != nil || in.Total == 0 {
+	if err := bindJSONCoerced(c, &in); err != nil || in.Total == 0 {
 		badRequest(c, "total is required")
 		return
 	}
@@ -513,7 +513,7 @@ func (h *API) ListCampaigns(c *gin.Context) {
 
 func (h *API) CreateCampaign(c *gin.Context) {
 	var in store.CampaignInput
-	if err := c.ShouldBindJSON(&in); err != nil || in.Name == "" {
+	if err := bindJSONCoerced(c, &in); err != nil || in.Name == "" {
 		badRequest(c, "name is required")
 		return
 	}
