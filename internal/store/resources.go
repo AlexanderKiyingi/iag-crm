@@ -324,6 +324,7 @@ type TicketInput struct {
 	Channel     string `json:"channel"`
 	Owner       string `json:"owner"`
 	Description string `json:"description"`
+	Status      string `json:"status"`
 }
 
 func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.Ticket, error) {
@@ -333,6 +334,10 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 	}
 	if in.Priority == "" {
 		in.Priority = "P2"
+	}
+	status := in.Status
+	if status == "" {
+		status = "open"
 	}
 	accountID := in.AccountID
 	if accountID == "" && in.Account != "" {
@@ -347,12 +352,21 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_tickets (id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type,
 			priority, channel, status, owner, description, sla_due_at, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'open',$11,$12,$13,$14,$14)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
 	`, id, nullStr(accountID), in.Account, nullStr(in.ContactID), nullStr(in.OutletRef), nullStr(in.DealID),
-		in.Subject, in.Type, in.Priority, in.Channel, in.Owner, in.Description, sla, now)
+		in.Subject, in.Type, in.Priority, in.Channel, status, in.Owner, in.Description, sla, now)
 	if err != nil {
 		return models.Ticket{}, err
 	}
+	row := r.db(ctx).QueryRow(ctx, `
+		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
+		       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
+		FROM crm_tickets WHERE id = $1
+	`, id)
+	return scanTicket(row)
+}
+
+func (r *Repository) GetTicket(ctx context.Context, id string) (models.Ticket, error) {
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
 		       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
@@ -448,6 +462,46 @@ type CampaignInput struct {
 	BudgetUSD float64    `json:"budget_usd"`
 	Owner     string     `json:"owner"`
 	Goal      string     `json:"goal"`
+	Status    string     `json:"status"`
+}
+
+func (r *Repository) GetCampaign(ctx context.Context, id string) (models.Campaign, error) {
+	row := r.db(ctx).QueryRow(ctx, `
+		SELECT id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at
+		FROM crm_campaigns WHERE id = $1
+	`, id)
+	return scanCampaign(row)
+}
+
+func (r *Repository) PatchCampaign(ctx context.Context, id string, patch map[string]any) (models.Campaign, error) {
+	sets := []string{"updated_at = NOW()"}
+	args := []any{}
+	i := 1
+	add := func(col string, val any) {
+		sets = append(sets, fmt.Sprintf("%s = $%d", col, i))
+		args = append(args, val)
+		i++
+	}
+	for k, col := range map[string]string{
+		"name": "name", "type": "campaign_type", "audience": "audience",
+		"status": "status", "owner": "owner", "goal": "goal",
+	} {
+		if v, ok := patch[k].(string); ok {
+			add(col, v)
+		}
+	}
+	if v, ok := patch["budget_usd"].(float64); ok {
+		add("budget_usd", v)
+	}
+	if len(sets) == 1 {
+		return r.GetCampaign(ctx, id)
+	}
+	args = append(args, id)
+	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_campaigns SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
+	if err != nil {
+		return models.Campaign{}, err
+	}
+	return r.GetCampaign(ctx, id)
 }
 
 func (r *Repository) CreateCampaign(ctx context.Context, in CampaignInput) (models.Campaign, error) {
@@ -456,10 +510,14 @@ func (r *Repository) CreateCampaign(ctx context.Context, in CampaignInput) (mode
 		return models.Campaign{}, err
 	}
 	now := time.Now().UTC()
+	status := in.Status
+	if status == "" {
+		status = "draft"
+	}
 	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_campaigns (id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft',$10,$10)
-	`, id, in.Name, in.Type, in.Audience, in.StartsOn, in.EndsOn, nullFloat(in.BudgetUSD), in.Owner, in.Goal, now)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+	`, id, in.Name, in.Type, in.Audience, in.StartsOn, in.EndsOn, nullFloat(in.BudgetUSD), in.Owner, in.Goal, status, now)
 	if err != nil {
 		return models.Campaign{}, err
 	}

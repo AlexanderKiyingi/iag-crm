@@ -185,12 +185,15 @@ func registerMarketingRoutes(v1 *gin.RouterGroup, api *handlers.API) {
 	v1.GET("/brand-kit", auth.RequirePerm("content.read"), api.GetBrandKit)
 	v1.GET("/campaigns", auth.RequirePerm("campaigns.read"), api.ListCampaigns)
 	v1.POST("/campaigns", auth.RequirePerm("campaigns.create"), api.CreateCampaign)
+	v1.GET("/campaigns/:id", auth.RequirePerm("campaigns.read"), api.GetCampaign)
+	v1.PATCH("/campaigns/:id", auth.RequirePerm("campaigns.update"), api.PatchCampaign)
 	v1.DELETE("/campaigns/:id", auth.RequirePerm("campaigns.delete"), api.DeleteCampaign)
 }
 
 func registerEngagementRoutes(v1 *gin.RouterGroup, api *handlers.API) {
 	v1.GET("/activities", auth.RequirePerm("activities.read"), api.ListActivities)
 	v1.POST("/activities", auth.RequirePerm("activities.create"), api.CreateActivity)
+	v1.GET("/activities/:id", auth.RequirePerm("activities.read"), api.GetActivity)
 	v1.PATCH("/activities/:id", auth.RequirePerm("activities.update"), api.PatchActivity)
 	v1.DELETE("/activities/:id", auth.RequirePerm("activities.delete"), api.DeleteActivity)
 	v1.GET("/activities/stream", auth.RequirePerm("activities.read"), api.ActivitiesStream)
@@ -198,6 +201,7 @@ func registerEngagementRoutes(v1 *gin.RouterGroup, api *handlers.API) {
 	v1.GET("/exports/jobs/:id", auth.RequirePerm("exports.read"), api.GetExportJob)
 	v1.GET("/tickets", auth.RequirePerm("tickets.read"), api.ListTickets)
 	v1.POST("/tickets", auth.RequirePerm("tickets.create"), api.CreateTicket)
+	v1.GET("/tickets/:id", auth.RequirePerm("tickets.read"), api.GetTicket)
 	v1.PATCH("/tickets/:id", auth.RequirePerm("tickets.update"), api.PatchTicket)
 	v1.DELETE("/tickets/:id", auth.RequirePerm("tickets.delete"), api.DeleteTicket)
 	v1.GET("/loyalty/tiers", auth.RequirePerm("loyalty.read"), api.ListLoyaltyTiers)
@@ -216,6 +220,7 @@ func registerBridgeRoutes(v1 *gin.RouterGroup, api *handlers.API) {
 	v1.GET("/bridge/mappings", auth.RequirePerm("bridge.read"), api.BridgeFieldMappings)
 	v1.GET("/bridge/sync-log", auth.RequirePerm("bridge.read"), api.BridgeSyncLog)
 	v1.GET("/outlets", auth.RequirePerm("outlets.read"), api.ListOutlets)
+	v1.GET("/outlets/:id", auth.RequirePerm("outlets.read"), api.GetOutlet)
 	v1.GET("/outlets/:id/360", auth.RequirePerm("outlets.read"), api.GetOutlet360)
 	v1.GET("/export-customers", auth.RequirePerm("exports.read"), api.ListExportCustomers)
 	v1.POST("/export-customers", auth.RequirePerm("exports.create"), api.CreateExportCustomer)

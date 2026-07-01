@@ -130,6 +130,10 @@ func (r *Repository) ListOutlets(ctx context.Context, opts ListOpts) ([]map[stri
 	return r.listGeneric(ctx, "crm_outlets", opts, "name, dms_ref, city, segment, health, owner")
 }
 
+func (r *Repository) GetOutlet(ctx context.Context, id string) (map[string]any, error) {
+	return r.GetGenericRow(ctx, "crm_outlets", "name, dms_ref, city, segment, health, owner", id)
+}
+
 func (r *Repository) GetOutlet360(ctx context.Context, id string) (map[string]any, error) {
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT o.id, o.name, o.dms_ref, o.city, o.segment, o.health, o.owner, a.name

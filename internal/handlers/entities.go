@@ -448,6 +448,19 @@ func (h *API) CreateActivity(c *gin.Context) {
 	c.JSON(http.StatusCreated, item)
 }
 
+func (h *API) GetActivity(c *gin.Context) {
+	item, err := h.Repo.GetActivity(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "get activity failed")
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
 func (h *API) ListTickets(c *gin.Context) {
 	items, total, err := h.Repo.ListTickets(c.Request.Context(), scopedListOpts(c))
 	if err != nil {
@@ -502,6 +515,19 @@ func (h *API) PatchTicket(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
+func (h *API) GetTicket(c *gin.Context) {
+	item, err := h.Repo.GetTicket(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "get ticket failed")
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
 func (h *API) ListCampaigns(c *gin.Context) {
 	items, total, err := h.Repo.ListCampaigns(c.Request.Context(), scopedListOpts(c))
 	if err != nil {
@@ -535,6 +561,38 @@ func (h *API) CreateCampaign(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, item)
+}
+
+func (h *API) GetCampaign(c *gin.Context) {
+	item, err := h.Repo.GetCampaign(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "get campaign failed")
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
+func (h *API) PatchCampaign(c *gin.Context) {
+	var patch map[string]any
+	if err := c.ShouldBindJSON(&patch); err != nil {
+		badRequest(c, "invalid body")
+		return
+	}
+	item, err := h.Repo.PatchCampaign(c.Request.Context(), c.Param("id"), patch)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "update campaign failed")
+		return
+	}
+	h.recordAudit(c, "CampaignUpdated", store.AuditDetail("campaign", item.ID, "updated"))
+	c.JSON(http.StatusOK, item)
 }
 
 func (h *API) DeleteDeal(c *gin.Context) {

@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/iag/crm/backend/internal/middleware"
 	"github.com/iag/crm/backend/internal/models"
@@ -276,6 +278,19 @@ func (h *API) ListOutlets(c *gin.Context) {
 	})
 }
 
+func (h *API) GetOutlet(c *gin.Context) {
+	item, err := h.Repo.GetOutlet(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "get outlet failed")
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
 func (h *API) GetOutlet360(c *gin.Context) {
 	item, err := h.Repo.GetOutlet360(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -534,16 +549,42 @@ func (h *API) DeleteEmailSend(c *gin.Context) {
 }
 
 func (h *API) GetSocialPost(c *gin.Context) {
-	genericGet(c, func(ctx *gin.Context, id string) (map[string]any, error) {
-		return h.Repo.GetGenericRow(ctx.Request.Context(), "crm_social_posts", "platforms, content, status, scheduled_at", id)
-	})
+	item, err := h.Repo.GetSocialPost(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound(c)
+			return
+		}
+		apierr.JSONStatus(c, http.StatusInternalServerError, "get social post failed")
+		return
+	}
+	c.JSON(http.StatusOK, item)
 }
 func (h *API) PatchSocialPost(c *gin.Context) {
 	genericPatch(c, func(ctx *gin.Context, id string, patch map[string]any) (map[string]any, error) {
-		return h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_social_posts", id, patch, map[string]string{
+		coerceSocialPatch(patch)
+		if _, err := h.Repo.PatchGenericRow(ctx.Request.Context(), "crm_social_posts", id, patch, map[string]string{
 			"platforms": "platforms", "content": "content", "status": "status",
-		})
+		}); err != nil {
+			return nil, err
+		}
+		return h.Repo.GetSocialPost(ctx.Request.Context(), id)
 	})
+}
+
+func coerceSocialPatch(patch map[string]any) {
+	if _, ok := patch["platforms"]; !ok {
+		if v, ok := patch["network"].(string); ok && v != "" {
+			patch["platforms"] = v
+		} else if v, ok := patch["handle"].(string); ok && v != "" {
+			patch["platforms"] = v
+		}
+	}
+	if _, ok := patch["content"]; !ok {
+		if v, ok := patch["message"].(string); ok {
+			patch["content"] = v
+		}
+	}
 }
 func (h *API) DeleteSocialPost(c *gin.Context) {
 	genericDelete(c, func(ctx *gin.Context, id string) error {

@@ -222,19 +222,67 @@ func (r *Repository) CreateEmailSend(ctx context.Context, in map[string]any) (ma
 }
 
 func (r *Repository) ListSocialPosts(ctx context.Context, opts ListOpts) ([]map[string]any, int, error) {
-	return r.listGeneric(ctx, "crm_social_posts", opts, "platforms, content, status, scheduled_at")
+	items, total, err := r.listGeneric(ctx, "crm_social_posts", opts, "platforms, content, status, scheduled_at")
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range items {
+		normalizeSocialAliases(items[i])
+	}
+	return items, total, nil
 }
 
 func (r *Repository) CreateSocialPost(ctx context.Context, in map[string]any) (map[string]any, error) {
 	id, _ := r.NextID(ctx, "SOC", 100)
+	platforms := str(in, "platforms")
+	if platforms == "" {
+		network := str(in, "network")
+		handle := str(in, "handle")
+		switch {
+		case network != "" && handle != "":
+			platforms = network + " / " + handle
+		case network != "":
+			platforms = network
+		default:
+			platforms = handle
+		}
+	}
+	content := str(in, "content")
+	if content == "" {
+		content = str(in, "message")
+	}
+	status := str(in, "status")
+	if status == "" {
+		status = "draft"
+	}
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_social_posts (id, platforms, content, status, created_at, updated_at)
-		VALUES ($1,$2,$3,'draft',NOW(),NOW())
-	`, id, str(in, "platforms"), str(in, "content"))
+		VALUES ($1,$2,$3,$4,NOW(),NOW())
+	`, id, platforms, content, status)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"id": id}, nil
+}
+
+func normalizeSocialAliases(row map[string]any) {
+	if row == nil {
+		return
+	}
+	platforms, _ := row["platforms"].(string)
+	content, _ := row["content"].(string)
+	row["network"] = platforms
+	row["handle"] = platforms
+	row["message"] = content
+}
+
+func (r *Repository) GetSocialPost(ctx context.Context, id string) (map[string]any, error) {
+	row, err := r.GetGenericRow(ctx, "crm_social_posts", "platforms, content, status, scheduled_at", id)
+	if err != nil {
+		return nil, err
+	}
+	normalizeSocialAliases(row)
+	return row, nil
 }
 
 func (r *Repository) ListSEOKeywords(ctx context.Context, opts ListOpts) ([]map[string]any, int, error) {
