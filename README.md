@@ -9,7 +9,7 @@ Registry: [`subrepos.json`](../../../subrepos.json) · Dev port: **4101** · Gat
 - **Go 1.25** + **Gin**
 - **Postgres** (`crm_*` tables, `svc_iag_crm` role)
 - **Platform JWT** (`aud=iag.crm`) — same pattern as contract-management
-- **Embedded UI** — `index.html` served at `GET /` and `GET /ui` when `SERVE_UI=true`
+- **Embedded UI** — optional dev prototype at `GET /` and `GET /ui` when `SERVE_UI=true` (off in production by default)
 - **Next.js** via gateway + CORS (`ALLOWED_ORIGINS`)
 
 ## Quick start
