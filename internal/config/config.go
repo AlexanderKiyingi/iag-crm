@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ type Config struct {
 	ServiceClientID     string
 	ServiceClientSecret string
 	AuthTokenURL        string
+	AuthServiceURL      string
 	GatewayAPIPrefix    string
 	CORSOrigin          string
 	PublicAPIURL        string
@@ -50,6 +52,14 @@ type Config struct {
 func Load() (Config, error) {
 	env := strings.ToLower(strings.TrimSpace(envOr("ENVIRONMENT", envOr("APP_ENV", "development"))))
 	issuer := envOr("JWT_ISSUER", "http://localhost:3001")
+	authTokenURL := envOr("AUTH_TOKEN_URL", strings.TrimRight(issuer, "/")+"/oauth/token")
+	authServiceURL := strings.TrimSpace(os.Getenv("AUTH_SERVICE_URL"))
+	if authServiceURL == "" {
+		authServiceURL = authServiceBaseFromTokenURL(authTokenURL)
+	}
+	if authServiceURL == "" {
+		authServiceURL = strings.TrimRight(issuer, "/")
+	}
 	origins := corsenv.Allowlist(corsenv.DefaultDevOrigins)
 	publicAPI := strings.TrimRight(strings.TrimSpace(envOr("PUBLIC_API_URL", "http://localhost:8080")), "/")
 
@@ -63,7 +73,8 @@ func Load() (Config, error) {
 		Audience:            envOr("AUDIENCE", "iag.crm"),
 		ServiceClientID:     envOr("SERVICE_CLIENT_ID", "iag-crm"),
 		ServiceClientSecret: strings.TrimSpace(os.Getenv("SERVICE_CLIENT_SECRET")),
-		AuthTokenURL:        envOr("AUTH_TOKEN_URL", strings.TrimRight(issuer, "/")+"/oauth/token"),
+		AuthTokenURL:        authTokenURL,
+		AuthServiceURL:      authServiceURL,
 		GatewayAPIPrefix:    strings.TrimSpace(envOr("GATEWAY_API_PREFIX", "/api/v1/crm")),
 		CORSOrigin:          origins,
 		PublicAPIURL:        publicAPI,
@@ -127,6 +138,23 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func authServiceBaseFromTokenURL(tokenURL string) string {
+	tokenURL = strings.TrimSpace(tokenURL)
+	if tokenURL == "" {
+		return ""
+	}
+	if u, err := url.Parse(tokenURL); err == nil && u.Scheme != "" && u.Host != "" {
+		u.Path = ""
+		u.RawQuery = ""
+		u.Fragment = ""
+		return strings.TrimRight(u.String(), "/")
+	}
+	if i := strings.LastIndex(tokenURL, "/oauth/token"); i > 0 {
+		return strings.TrimRight(tokenURL[:i], "/")
+	}
+	return strings.TrimRight(tokenURL, "/")
 }
 
 func ParseBrokers(raw string) []string {

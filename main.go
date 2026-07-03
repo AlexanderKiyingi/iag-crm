@@ -304,7 +304,7 @@ func registerPermissionsLoop(ctx context.Context, cfg config.Config) {
 	backoff := time.Second
 	for {
 		regCtx, c := context.WithTimeout(ctx, 10*time.Second)
-		err := platformserviceauth.RegisterPermissions(regCtx, saClient, cfg.JWTIssuer, "crm", perms)
+		err := platformserviceauth.RegisterPermissions(regCtx, saClient, cfg.AuthServiceURL, "crm", perms)
 		c()
 		if err == nil {
 			slog.Info("permissions registered", "count", len(perms))
