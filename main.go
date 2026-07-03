@@ -12,8 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	_ "embed"
-
 	platformotel "github.com/alvor-technologies/iag-platform-go/otel"
 	platformserviceauth "github.com/alvor-technologies/iag-platform-go/serviceauth"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,9 +40,6 @@ import (
 	"github.com/iag/crm/backend/internal/store"
 	"github.com/iag/crm/backend/internal/usersclient"
 )
-
-//go:embed index.html
-var indexHTML []byte
 
 func main() {
 	configureLogger()
@@ -208,7 +203,6 @@ func main() {
 		PlatformAuth: platformAuth,
 		Repo:         repo,
 		API:          api,
-		IndexHTML:    indexHTML,
 	})
 
 	srv := &http.Server{

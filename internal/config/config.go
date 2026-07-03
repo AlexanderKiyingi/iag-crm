@@ -33,7 +33,6 @@ type Config struct {
 	AIAudience          string
 	AutoMigrate         bool
 	SeedOnEmpty         bool
-	ServeUI             bool
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
 	KafkaBrokers        []string
@@ -86,7 +85,6 @@ func Load() (Config, error) {
 		AIAudience:          envOr("AI_AUDIENCE", "iag.ai-platform"),
 		AutoMigrate:         envOr("AUTO_MIGRATE", "true") != "false",
 		SeedOnEmpty:         envOr("SEED_ON_EMPTY", "true") != "false",
-		ServeUI:             serveUIEnabled(env),
 		ReadTimeout:         30 * time.Second,
 		WriteTimeout:        30 * time.Second,
 		EventBusEnabled:     strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
@@ -138,20 +136,6 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-// serveUIEnabled controls the embedded index.html prototype at GET / and /ui.
-// Off by default in production/staging; set SERVE_UI=true for local dev only.
-func serveUIEnabled(env string) bool {
-	if v := strings.TrimSpace(os.Getenv("SERVE_UI")); v != "" {
-		return !strings.EqualFold(v, "false") && v != "0"
-	}
-	switch strings.ToLower(strings.TrimSpace(env)) {
-	case "production", "prod", "staging":
-		return false
-	default:
-		return true
-	}
 }
 
 func authServiceBaseFromTokenURL(tokenURL string) string {

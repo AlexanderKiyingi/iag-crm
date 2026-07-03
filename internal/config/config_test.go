@@ -49,21 +49,3 @@ func TestValidateRequiresJWKSURL(t *testing.T) {
 		t.Fatal("expected JWKS_URL requirement")
 	}
 }
-
-func TestServeUIEnabled(t *testing.T) {
-	t.Setenv("SERVE_UI", "")
-	if serveUIEnabled("production") {
-		t.Fatal("production should disable UI by default")
-	}
-	if !serveUIEnabled("development") {
-		t.Fatal("development should enable UI by default")
-	}
-	t.Setenv("SERVE_UI", "true")
-	if !serveUIEnabled("production") {
-		t.Fatal("SERVE_UI=true should override production default")
-	}
-	t.Setenv("SERVE_UI", "false")
-	if serveUIEnabled("development") {
-		t.Fatal("SERVE_UI=false should disable UI in development")
-	}
-}

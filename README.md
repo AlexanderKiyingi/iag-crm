@@ -1,6 +1,6 @@
 # iag-crm
 
-Commercial CRM microservice for the IAG platform — Go/Gin backend aligned with the Customer Tower prototype in `index.html`.
+Commercial CRM microservice for the IAG platform — Go/Gin API backend for the Customer Tower.
 
 Registry: [`subrepos.json`](../../../subrepos.json) · Dev port: **4101** · Gateway: **`/api/v1/crm/v1`**
 
@@ -9,7 +9,6 @@ Registry: [`subrepos.json`](../../../subrepos.json) · Dev port: **4101** · Gat
 - **Go 1.25** + **Gin**
 - **Postgres** (`crm_*` tables, `svc_iag_crm` role)
 - **Platform JWT** (`aud=iag.crm`) — same pattern as contract-management
-- **Embedded UI** — optional dev prototype at `GET /` and `GET /ui` when `SERVE_UI=true` (off in production by default)
 - **Next.js** via gateway + CORS (`ALLOWED_ORIGINS`)
 
 ## Quick start
@@ -35,7 +34,7 @@ import { crmApi } from "./docs/crm-api";
 const boot = await crmApi.bootstrap(accessToken);
 ```
 
-`GET /v1/bootstrap` returns session, RBAC pages/modals (from `index.html` roles), page titles, and API prefix.
+`GET /v1/bootstrap` returns session, RBAC pages/modals, page titles, and API prefix.
 
 ## API coverage (29 UI pages)
 

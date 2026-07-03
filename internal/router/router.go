@@ -20,7 +20,6 @@ type Options struct {
 	PlatformAuth *middleware.PlatformAuth
 	Repo         *store.Repository
 	API          *handlers.API
-	IndexHTML    []byte
 }
 
 func New(opts Options) *gin.Engine {
@@ -60,10 +59,6 @@ func New(opts Options) *gin.Engine {
 	registerAuditRoutes(v1, api)
 	registerAdminRoutes(v1, api)
 	registerIntegrationRoutes(v1, api)
-
-	if opts.Cfg.ServeUI && len(opts.IndexHTML) > 0 {
-		registerUIRoutes(r, opts.IndexHTML)
-	}
 
 	return r
 }
@@ -260,16 +255,6 @@ func registerAdminRoutes(v1 *gin.RouterGroup, api *handlers.API) {
 		admin.GET("/monitoring/bridge", auth.RequirePerm("admin.read"), api.AdminMonitoringBridge)
 		admin.POST("/bridge/sync", auth.RequirePerm("admin.update"), api.AdminBridgeSync)
 	}
-}
-
-func registerUIRoutes(r *gin.Engine, html []byte) {
-	serve := func(c *gin.Context) {
-		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.Header("Cache-Control", "no-cache")
-		c.Data(http.StatusOK, "text/html; charset=utf-8", html)
-	}
-	r.GET("/", serve)
-	r.GET("/ui", serve)
 }
 
 func corsMiddleware(allowed string) gin.HandlerFunc {
