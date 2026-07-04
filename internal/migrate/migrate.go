@@ -14,8 +14,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// This service owns the `crm` schema on the shared Railway database. The ledger
+// is schema-qualified so it can never collide with another service's global
+// public.schema_migrations (the collision that caused cross-service boot
+// failures). db.Connect pins search_path to `crm, public`.
 const schemaMigrationsDDL = `
-CREATE TABLE IF NOT EXISTS schema_migrations (
+CREATE TABLE IF NOT EXISTS crm.schema_migrations (
     version    TEXT PRIMARY KEY,
     checksum   TEXT NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -28,13 +32,24 @@ type Migration struct {
 }
 
 func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
+	migs, err := load(fsys)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS crm`); err != nil {
+		return nil, fmt.Errorf("create schema crm: %w", err)
+	}
 	if _, err := pool.Exec(ctx, schemaMigrationsDDL); err != nil {
 		return nil, fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	migs, err := load(fsys)
-	if err != nil {
-		return nil, err
+	// One-time cutover from the shared global public.schema_migrations: stamp this
+	// service's already-applied versions into the per-service ledger with their
+	// current file checksums, so nothing re-runs and the mismatch/re-apply path
+	// below cannot fire against tables that already exist in public.
+	if err := seedFromLegacyLedger(ctx, pool, migs); err != nil {
+		return nil, fmt.Errorf("seed from legacy ledger: %w", err)
 	}
 
 	applied, err := loadApplied(ctx, pool)
@@ -110,6 +125,36 @@ func baseTableExists(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 	return reg != nil, nil
 }
 
+// seedFromLegacyLedger stamps this service's shipped versions into crm's ledger
+// using the CURRENT file checksums, for any version already recorded in a legacy
+// global public.schema_migrations. Using the file checksum (rather than the
+// legacy one) guarantees the checksum-mismatch re-apply path in Up does not fire
+// during the shared-database cutover — those objects already exist in public and
+// resolve through the search_path fallback. Idempotent; no-op on a fresh DB.
+func seedFromLegacyLedger(ctx context.Context, pool *pgxpool.Pool, migs []Migration) error {
+	var hasLegacy bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = 'schema_migrations'
+		)`).Scan(&hasLegacy); err != nil {
+		return err
+	}
+	if !hasLegacy {
+		return nil
+	}
+	for _, m := range migs {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO crm.schema_migrations (version, checksum)
+			SELECT $1, $2
+			WHERE EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = $1)
+			ON CONFLICT (version) DO NOTHING`, m.Version, m.Checksum); err != nil {
+			return fmt.Errorf("seed %s: %w", m.Version, err)
+		}
+	}
+	return nil
+}
+
 func load(fsys fs.FS) ([]Migration, error) {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
@@ -142,7 +187,7 @@ type appliedRow struct {
 }
 
 func loadApplied(ctx context.Context, pool *pgxpool.Pool) (map[string]appliedRow, error) {
-	rows, err := pool.Query(ctx, `SELECT version, checksum FROM schema_migrations`)
+	rows, err := pool.Query(ctx, `SELECT version, checksum FROM crm.schema_migrations`)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +214,7 @@ func apply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
 		return err
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO schema_migrations (version, checksum) VALUES ($1, $2)`,
+		`INSERT INTO crm.schema_migrations (version, checksum) VALUES ($1, $2)`,
 		m.Version, m.Checksum); err != nil {
 		if strings.Contains(err.Error(), "23505") {
 			return errors.New("concurrent migration: version already applied by another process")
@@ -194,7 +239,7 @@ func reapply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
 		return err
 	}
 	if _, err := tx.Exec(ctx,
-		`UPDATE schema_migrations SET checksum = $1 WHERE version = $2`,
+		`UPDATE crm.schema_migrations SET checksum = $1 WHERE version = $2`,
 		m.Checksum, m.Version); err != nil {
 		return err
 	}

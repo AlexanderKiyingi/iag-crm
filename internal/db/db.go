@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -28,6 +29,15 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = 15 * time.Minute
 	cfg.ConnConfig.ConnectTimeout = 10 * time.Second
+
+	// Resolve unqualified names to this service's own schema first, falling back
+	// to public so legacy tables that still live there keep resolving. On the
+	// shared Railway database this isolates crm from the global public namespace
+	// and its single global schema_migrations ledger. See internal/migrate.
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, `SET search_path TO crm, public`)
+		return err
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
