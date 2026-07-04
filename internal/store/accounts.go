@@ -76,6 +76,7 @@ type ListOpts struct {
 	Stage  string
 	Status string
 	Search string
+	Type   string
 }
 
 func clampLimit(limit int) int {
@@ -197,18 +198,18 @@ func (r *Repository) GetAccount(ctx context.Context, id string) (models.Account,
 }
 
 type AccountInput struct {
-	Name      string  `json:"name"`
-	Type      string  `json:"type"`
-	Country   string  `json:"country"`
-	Segment   string  `json:"segment"`
-	Owner     string  `json:"owner"`
-	Value     string  `json:"value"`
-	Health    int     `json:"health"`
-	Status    string  `json:"status"`
-	Bridged   bool    `json:"bridged"`
-	Email     string  `json:"email"`
-	Phone     string  `json:"phone"`
-	Address   string  `json:"address"`
+	Name               string  `json:"name"`
+	Type               string  `json:"type"`
+	Country            string  `json:"country"`
+	Segment            string  `json:"segment"`
+	Owner              string  `json:"owner"`
+	Value              string  `json:"value"`
+	Health             int     `json:"health"`
+	Status             string  `json:"status"`
+	Bridged            bool    `json:"bridged"`
+	Email              string  `json:"email"`
+	Phone              string  `json:"phone"`
+	Address            string  `json:"address"`
 	DmsRef             string  `json:"dms_ref"`
 	BillingOrgID       string  `json:"billing_org_id"`
 	BillingIdentityID  string  `json:"billing_identity_id"`

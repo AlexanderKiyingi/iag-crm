@@ -72,17 +72,17 @@ func (r *Repository) ListQuotes(ctx context.Context, opts ListOpts) ([]models.Qu
 }
 
 type QuoteInput struct {
-	Ref          string                `json:"ref"`
-	Account      string                `json:"account"`
-	AccountID    string                `json:"account_id"`
-	DealID       string                `json:"deal_id"`
-	Template     string                `json:"template"`
-	Currency     string                `json:"currency"`
-	Incoterms    string                `json:"incoterms"`
-	PaymentTerms string                `json:"payment_terms"`
-	ValidUntil   *time.Time            `json:"valid_until"`
-	Total        float64               `json:"total"`
-	Owner        string                `json:"owner"`
+	Ref          string                 `json:"ref"`
+	Account      string                 `json:"account"`
+	AccountID    string                 `json:"account_id"`
+	DealID       string                 `json:"deal_id"`
+	Template     string                 `json:"template"`
+	Currency     string                 `json:"currency"`
+	Incoterms    string                 `json:"incoterms"`
+	PaymentTerms string                 `json:"payment_terms"`
+	ValidUntil   *time.Time             `json:"valid_until"`
+	Total        float64                `json:"total"`
+	Owner        string                 `json:"owner"`
 	LineItems    []models.QuoteLineItem `json:"line_items"`
 }
 
@@ -186,14 +186,32 @@ func scanActivity(row pgx.Row) (models.Activity, error) {
 
 func (r *Repository) ListActivities(ctx context.Context, opts ListOpts) ([]models.Activity, int, error) {
 	opts.Limit = clampLimit(opts.Limit)
+	// Optional type filter (comma-separated), so callers can page a single
+	// activity kind (task/meeting/call) without over-fetching and filtering client-side.
+	types := splitCSV(opts.Type)
+	where := ""
+	args := []any{opts.Limit, opts.Offset}
+	if len(types) > 0 {
+		where = " WHERE activity_type = ANY($3)"
+		args = append(args, types)
+	}
+
 	var total int
-	if err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_activities`).Scan(&total); err != nil {
+	countQ := "SELECT COUNT(*)::int FROM crm_activities"
+	if where != "" {
+		countQ += " WHERE activity_type = ANY($1)"
+		if err := r.db(ctx).QueryRow(ctx, countQ, types).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+	} else if err := r.db(ctx).QueryRow(ctx, countQ).Scan(&total); err != nil {
 		return nil, 0, err
 	}
+
 	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, created_at
-		FROM crm_activities ORDER BY occurred_at DESC LIMIT $1 OFFSET $2
-	`, opts.Limit, opts.Offset)
+		FROM crm_activities`+where+`
+		ORDER BY occurred_at DESC LIMIT $1 OFFSET $2
+	`, args...)
 	if err != nil {
 		return nil, 0, err
 	}

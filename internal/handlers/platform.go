@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/iag/crm/backend/internal/aiclient"
 	"github.com/iag/crm/backend/internal/auth"
 	"github.com/iag/crm/backend/internal/bridge"
@@ -19,20 +20,19 @@ import (
 	"github.com/iag/crm/backend/internal/models"
 	"github.com/iag/crm/backend/internal/store"
 	"github.com/iag/crm/backend/internal/usersclient"
-	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type API struct {
-	Repo      *store.Repository
-	Cfg       config.Config
-	Events    *events.Bus
-	Finance   *financeclient.Client
-	Users     *usersclient.Client
-	DMS       *dmsclient.Client
-	Contracts *contractsclient.Client
-	AI        *aiclient.Client
-	Bridge        *bridge.Service
-	Integrations  *integrations.Service
+	Repo         *store.Repository
+	Cfg          config.Config
+	Events       *events.Bus
+	Finance      *financeclient.Client
+	Users        *usersclient.Client
+	DMS          *dmsclient.Client
+	Contracts    *contractsclient.Client
+	AI           *aiclient.Client
+	Bridge       *bridge.Service
+	Integrations *integrations.Service
 }
 
 func listOpts(c *gin.Context) store.ListOpts {
@@ -45,6 +45,7 @@ func listOpts(c *gin.Context) store.ListOpts {
 		Stage:  c.Query("stage"),
 		Status: c.Query("status"),
 		Search: c.Query("q"),
+		Type:   c.Query("type"),
 	}
 }
 

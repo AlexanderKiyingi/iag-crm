@@ -12,6 +12,8 @@ var PermissionModules = []string{
 	"campaigns", "segments", "journeys", "personas", "events", "content", "email",
 	"social", "seo", "budget", "mqls", "loyalty", "bridge", "outlets", "exports",
 	"insights", "ai", "integrations", "audit", "admin",
+	// Generic CRM-owned module records (products, services, solutions, etc.).
+	"records",
 }
 
 func PermissionDescriptors() []PermissionDescriptor {

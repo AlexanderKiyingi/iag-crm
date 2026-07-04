@@ -51,6 +51,7 @@ func New(opts Options) *gin.Engine {
 
 	registerPlatformRoutes(v1, api)
 	registerDashboardRoutes(v1, api)
+	registerModuleRecordRoutes(v1, api)
 	registerSalesRoutes(v1, api)
 	registerMarketingRoutes(v1, api)
 	registerEngagementRoutes(v1, api)
@@ -80,6 +81,17 @@ func registerDashboardRoutes(v1 *gin.RouterGroup, api *handlers.API) {
 	v1.GET("/overview", auth.RequirePerm("accounts.read"), api.Overview)
 	v1.GET("/pipeline/board", auth.RequirePerm("deals.read"), api.PipelineBoard)
 	v1.GET("/deals/forecast", auth.RequirePerm("deals.read"), api.GetDealForecast)
+}
+
+// registerModuleRecordRoutes exposes generic CRUD for CRM-owned lightweight
+// modules (products, services, solutions, projects, documents, …), keyed by the
+// :module path segment. Financial/procurement modules are deliberately excluded.
+func registerModuleRecordRoutes(v1 *gin.RouterGroup, api *handlers.API) {
+	v1.GET("/modules/:module/records", auth.RequirePerm("records.read"), api.ModuleRecordsList)
+	v1.POST("/modules/:module/records", auth.RequirePerm("records.create"), api.ModuleRecordCreate)
+	v1.GET("/modules/:module/records/:id", auth.RequirePerm("records.read"), api.ModuleRecordGet)
+	v1.PATCH("/modules/:module/records/:id", auth.RequirePerm("records.update"), api.ModuleRecordPatch)
+	v1.DELETE("/modules/:module/records/:id", auth.RequirePerm("records.delete"), api.ModuleRecordDelete)
 }
 
 func registerSalesRoutes(v1 *gin.RouterGroup, api *handlers.API) {

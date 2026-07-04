@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -198,6 +199,21 @@ func stringsJoin(parts []string, sep string) string {
 	out := parts[0]
 	for i := 1; i < len(parts); i++ {
 		out += sep + parts[i]
+	}
+	return out
+}
+
+// splitCSV splits a comma-separated value into trimmed, non-empty parts.
+func splitCSV(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	raw := strings.Split(s, ",")
+	out := make([]string, 0, len(raw))
+	for _, p := range raw {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
 	}
 	return out
 }
