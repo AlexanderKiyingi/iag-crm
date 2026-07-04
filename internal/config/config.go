@@ -11,36 +11,37 @@ import (
 )
 
 type Config struct {
-	ServiceName         string
-	Addr                string
-	Environment         string
-	DatabaseURL         string
-	JWTIssuer           string
-	JWKSURL             string
-	Audience            string
-	ServiceClientID     string
-	ServiceClientSecret string
-	AuthTokenURL        string
-	AuthServiceURL      string
-	GatewayAPIPrefix    string
-	CORSOrigin          string
-	PublicAPIURL        string
-	UsersAPIURL         string
-	FinanceAPIURL       string
-	DMSAPIURL           string
-	ContractsAPIURL     string
-	AIAPIURL            string
-	AIAudience          string
-	AutoMigrate         bool
-	SeedOnEmpty         bool
-	ReadTimeout         time.Duration
-	WriteTimeout        time.Duration
-	KafkaBrokers        []string
-	EventBusEnabled     bool
-	ConsumerEnabled     bool
-	ConsumerGroupID     string
-	ConsumerDLQTopic    string
-	JourneyRunnerInterval time.Duration
+	ServiceName               string
+	Addr                      string
+	Environment               string
+	DatabaseURL               string
+	JWTIssuer                 string
+	JWKSURL                   string
+	Audience                  string
+	ServiceClientID           string
+	ServiceClientSecret       string
+	AuthTokenURL              string
+	AuthServiceURL            string
+	GatewayAPIPrefix          string
+	CORSOrigin                string
+	PublicAPIURL              string
+	UsersAPIURL               string
+	FinanceAPIURL             string
+	ProcurementAPIURL         string
+	DMSAPIURL                 string
+	ContractsAPIURL           string
+	AIAPIURL                  string
+	AIAudience                string
+	AutoMigrate               bool
+	SeedOnEmpty               bool
+	ReadTimeout               time.Duration
+	WriteTimeout              time.Duration
+	KafkaBrokers              []string
+	EventBusEnabled           bool
+	ConsumerEnabled           bool
+	ConsumerGroupID           string
+	ConsumerDLQTopic          string
+	JourneyRunnerInterval     time.Duration
 	GoogleOAuthRedirectURL    string
 	MicrosoftOAuthRedirectURL string
 	IntegrationTokenSecret    string
@@ -63,33 +64,34 @@ func Load() (Config, error) {
 	publicAPI := strings.TrimRight(strings.TrimSpace(envOr("PUBLIC_API_URL", "http://localhost:8080")), "/")
 
 	cfg := Config{
-		ServiceName:         envOr("SERVICE_NAME", "crm"),
-		Addr:                ListenAddr(),
-		Environment:         env,
-		DatabaseURL:         strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		JWTIssuer:           issuer,
-		JWKSURL:             envOr("JWKS_URL", strings.TrimRight(issuer, "/")+"/.well-known/jwks.json"),
-		Audience:            envOr("AUDIENCE", "iag.crm"),
-		ServiceClientID:     envOr("SERVICE_CLIENT_ID", "iag-crm"),
-		ServiceClientSecret: strings.TrimSpace(os.Getenv("SERVICE_CLIENT_SECRET")),
-		AuthTokenURL:        authTokenURL,
-		AuthServiceURL:      authServiceURL,
-		GatewayAPIPrefix:    strings.TrimSpace(envOr("GATEWAY_API_PREFIX", "/api/v1/crm")),
-		CORSOrigin:          origins,
-		PublicAPIURL:        publicAPI,
-		UsersAPIURL:         usersAPIURL(publicAPI, envOr("USERS_API_URL", "")),
-		FinanceAPIURL:       financeAPIURL(publicAPI, envOr("FINANCE_API_URL", "")),
-		DMSAPIURL:           dmsAPIURL(publicAPI, envOr("DMS_API_URL", "")),
-		ContractsAPIURL:     contractsAPIURL(publicAPI, envOr("CONTRACTS_API_URL", "")),
-		AIAPIURL:            aiAPIURL(publicAPI, envOr("AI_API_URL", "")),
-		AIAudience:          envOr("AI_AUDIENCE", "iag.ai-platform"),
-		AutoMigrate:         envOr("AUTO_MIGRATE", "true") != "false",
-		SeedOnEmpty:         envOr("SEED_ON_EMPTY", "true") != "false",
-		ReadTimeout:         30 * time.Second,
-		WriteTimeout:        30 * time.Second,
-		EventBusEnabled:     strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
-		ConsumerEnabled:     strings.EqualFold(os.Getenv("CONSUMER_ENABLED"), "true"),
-		ConsumerGroupID:     envOr("CONSUMER_GROUP_ID", "iag.crm.commercial"),
+		ServiceName:               envOr("SERVICE_NAME", "crm"),
+		Addr:                      ListenAddr(),
+		Environment:               env,
+		DatabaseURL:               strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		JWTIssuer:                 issuer,
+		JWKSURL:                   envOr("JWKS_URL", strings.TrimRight(issuer, "/")+"/.well-known/jwks.json"),
+		Audience:                  envOr("AUDIENCE", "iag.crm"),
+		ServiceClientID:           envOr("SERVICE_CLIENT_ID", "iag-crm"),
+		ServiceClientSecret:       strings.TrimSpace(os.Getenv("SERVICE_CLIENT_SECRET")),
+		AuthTokenURL:              authTokenURL,
+		AuthServiceURL:            authServiceURL,
+		GatewayAPIPrefix:          strings.TrimSpace(envOr("GATEWAY_API_PREFIX", "/api/v1/crm")),
+		CORSOrigin:                origins,
+		PublicAPIURL:              publicAPI,
+		UsersAPIURL:               usersAPIURL(publicAPI, envOr("USERS_API_URL", "")),
+		FinanceAPIURL:             financeAPIURL(publicAPI, envOr("FINANCE_API_URL", "")),
+		ProcurementAPIURL:         procurementAPIURL(publicAPI, envOr("PROCUREMENT_API_URL", "")),
+		DMSAPIURL:                 dmsAPIURL(publicAPI, envOr("DMS_API_URL", "")),
+		ContractsAPIURL:           contractsAPIURL(publicAPI, envOr("CONTRACTS_API_URL", "")),
+		AIAPIURL:                  aiAPIURL(publicAPI, envOr("AI_API_URL", "")),
+		AIAudience:                envOr("AI_AUDIENCE", "iag.ai-platform"),
+		AutoMigrate:               envOr("AUTO_MIGRATE", "true") != "false",
+		SeedOnEmpty:               envOr("SEED_ON_EMPTY", "true") != "false",
+		ReadTimeout:               30 * time.Second,
+		WriteTimeout:              30 * time.Second,
+		EventBusEnabled:           strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
+		ConsumerEnabled:           strings.EqualFold(os.Getenv("CONSUMER_ENABLED"), "true"),
+		ConsumerGroupID:           envOr("CONSUMER_GROUP_ID", "iag.crm.commercial"),
 		ConsumerDLQTopic:          envOr("CONSUMER_DLQ_TOPIC", "iag.dlq.crm"),
 		JourneyRunnerInterval:     parseDuration("JOURNEY_RUNNER_INTERVAL", 30*time.Second),
 		GoogleOAuthRedirectURL:    oauthRedirectURL(publicAPI, envOr("GOOGLE_OAUTH_REDIRECT_URL", ""), "google"),
@@ -182,6 +184,10 @@ func usersAPIURL(publicAPI, explicit string) string {
 
 func financeAPIURL(publicAPI, explicit string) string {
 	return serviceAPIURL(publicAPI, explicit, "http://localhost:8080/api/v1/finance", "/api/v1/finance")
+}
+
+func procurementAPIURL(publicAPI, explicit string) string {
+	return serviceAPIURL(publicAPI, explicit, "http://localhost:8080/api/v1/procurement", "/api/v1/procurement")
 }
 
 func dmsAPIURL(publicAPI, explicit string) string {

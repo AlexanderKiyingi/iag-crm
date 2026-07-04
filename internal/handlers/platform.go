@@ -18,6 +18,7 @@ import (
 	"github.com/iag/crm/backend/internal/integrations"
 	"github.com/iag/crm/backend/internal/middleware"
 	"github.com/iag/crm/backend/internal/models"
+	"github.com/iag/crm/backend/internal/procurementclient"
 	"github.com/iag/crm/backend/internal/store"
 	"github.com/iag/crm/backend/internal/usersclient"
 )
@@ -33,6 +34,7 @@ type API struct {
 	AI           *aiclient.Client
 	Bridge       *bridge.Service
 	Integrations *integrations.Service
+	Procurement  *procurementclient.Client
 }
 
 func listOpts(c *gin.Context) store.ListOpts {

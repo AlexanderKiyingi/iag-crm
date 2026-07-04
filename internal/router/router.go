@@ -52,6 +52,7 @@ func New(opts Options) *gin.Engine {
 	registerPlatformRoutes(v1, api)
 	registerDashboardRoutes(v1, api)
 	registerModuleRecordRoutes(v1, api)
+	registerExternalRoutes(v1, api)
 	registerSalesRoutes(v1, api)
 	registerMarketingRoutes(v1, api)
 	registerEngagementRoutes(v1, api)
@@ -81,6 +82,18 @@ func registerDashboardRoutes(v1 *gin.RouterGroup, api *handlers.API) {
 	v1.GET("/overview", auth.RequirePerm("accounts.read"), api.Overview)
 	v1.GET("/pipeline/board", auth.RequirePerm("deals.read"), api.PipelineBoard)
 	v1.GET("/deals/forecast", auth.RequirePerm("deals.read"), api.GetDealForecast)
+}
+
+// registerExternalRoutes surfaces read-only data owned by other services:
+// invoices from iag-finance, vendors and purchase orders from iag-procurement.
+// Reads are gated by accounts.read (held by every role); creation stays in the
+// owning service, so no write routes are exposed here.
+func registerExternalRoutes(v1 *gin.RouterGroup, api *handlers.API) {
+	v1.GET("/finance/invoices", auth.RequirePerm("accounts.read"), api.FinanceInvoicesList)
+	v1.GET("/finance/invoices/:id", auth.RequirePerm("accounts.read"), api.FinanceInvoiceGet)
+	v1.GET("/procurement/vendors", auth.RequirePerm("accounts.read"), api.ProcurementVendorsList)
+	v1.GET("/procurement/purchase-orders", auth.RequirePerm("accounts.read"), api.ProcurementPurchaseOrdersList)
+	v1.GET("/procurement/purchase-orders/:id", auth.RequirePerm("accounts.read"), api.ProcurementPurchaseOrderGet)
 }
 
 // registerModuleRecordRoutes exposes generic CRUD for CRM-owned lightweight

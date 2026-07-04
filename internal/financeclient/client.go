@@ -113,11 +113,11 @@ func (c *Client) CreateARItem(ctx context.Context, in CreateARInput) (string, er
 
 // CustomerStatement is a lightweight AR summary for account 360.
 type CustomerStatement struct {
-	CustomerRef string  `json:"customerRef"`
-	OpenBalance string  `json:"openBalance"`
-	Overdue     string  `json:"overdue"`
-	OpenItems   int     `json:"openItems"`
-	Currency    string  `json:"currency"`
+	CustomerRef string `json:"customerRef"`
+	OpenBalance string `json:"openBalance"`
+	Overdue     string `json:"overdue"`
+	OpenItems   int    `json:"openItems"`
+	Currency    string `json:"currency"`
 }
 
 func (c *Client) CustomerStatement(ctx context.Context, customerRef string) (*CustomerStatement, error) {
@@ -133,6 +133,42 @@ func (c *Client) CustomerStatement(ctx context.Context, customerRef string) (*Cu
 		return nil, err
 	}
 	return &out, nil
+}
+
+// ListInvoices reads billing invoices from iag-finance. The finance list
+// endpoint wraps rows in {"items": [...]}; we return the raw rows so the CRM
+// layer can surface them read-only without re-modelling finance's schema.
+func (c *Client) ListInvoices(ctx context.Context, limit, offset int) ([]map[string]any, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("finance client not configured")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	var out struct {
+		Items []map[string]any `json:"items"`
+		Data  []map[string]any `json:"data"`
+	}
+	path := fmt.Sprintf("/v1/billing/invoices?limit=%d&offset=%d", limit, offset)
+	if err := c.getJSON(ctx, path, &out); err != nil {
+		return nil, err
+	}
+	if len(out.Items) > 0 {
+		return out.Items, nil
+	}
+	return out.Data, nil
+}
+
+// GetInvoice reads a single billing invoice by id.
+func (c *Client) GetInvoice(ctx context.Context, id string) (map[string]any, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("finance client not configured")
+	}
+	var out map[string]any
+	if err := c.getJSON(ctx, "/v1/billing/invoices/"+strings.TrimSpace(id), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *Client) setAuth(ctx context.Context, req *http.Request) error {

@@ -20,8 +20,8 @@ import (
 	"github.com/iag/crm/backend/internal/aiclient"
 	"github.com/iag/crm/backend/internal/auth"
 	"github.com/iag/crm/backend/internal/bridge"
-	crmconsumer "github.com/iag/crm/backend/internal/consumer"
 	"github.com/iag/crm/backend/internal/config"
+	crmconsumer "github.com/iag/crm/backend/internal/consumer"
 	"github.com/iag/crm/backend/internal/contractsclient"
 	"github.com/iag/crm/backend/internal/db"
 	"github.com/iag/crm/backend/internal/dmsclient"
@@ -30,11 +30,12 @@ import (
 	"github.com/iag/crm/backend/internal/handlers"
 	"github.com/iag/crm/backend/internal/integrations"
 	journeyrunner "github.com/iag/crm/backend/internal/journey"
-	"github.com/iag/crm/backend/internal/migrate"
 	"github.com/iag/crm/backend/internal/middleware"
+	"github.com/iag/crm/backend/internal/migrate"
 	"github.com/iag/crm/backend/internal/models"
 	"github.com/iag/crm/backend/internal/outbox"
 	"github.com/iag/crm/backend/internal/platformauth"
+	"github.com/iag/crm/backend/internal/procurementclient"
 	"github.com/iag/crm/backend/internal/router"
 	"github.com/iag/crm/backend/internal/seed"
 	"github.com/iag/crm/backend/internal/store"
@@ -140,6 +141,10 @@ func main() {
 		BaseURL: cfg.FinanceAPIURL, TokenURL: saCfg.TokenURL,
 		ServiceClientID: saCfg.ClientID, ServiceSecret: saCfg.Secret,
 	})
+	procurementClient := procurementclient.New(procurementclient.Config{
+		BaseURL: cfg.ProcurementAPIURL, TokenURL: saCfg.TokenURL,
+		ServiceClientID: saCfg.ClientID, ServiceSecret: saCfg.Secret,
+	})
 	usersClient := usersclient.New(usersclient.Config{
 		BaseURL: cfg.UsersAPIURL, TokenURL: saCfg.TokenURL,
 		ServiceClientID: saCfg.ClientID, ServiceSecret: saCfg.Secret,
@@ -159,10 +164,10 @@ func main() {
 	})
 	bridgeSvc := &bridge.Service{Repo: repo, DMS: dmsClient}
 	integrationsSvc := integrations.New(repo, integrations.Config{
-		GoogleRedirectURL:       cfg.GoogleOAuthRedirectURL,
-		MicrosoftRedirectURL:    cfg.MicrosoftOAuthRedirectURL,
-		StateSecret:             cfg.IntegrationTokenSecret,
-		RequireSignedState:      cfg.IsProduction(),
+		GoogleRedirectURL:    cfg.GoogleOAuthRedirectURL,
+		MicrosoftRedirectURL: cfg.MicrosoftOAuthRedirectURL,
+		StateSecret:          cfg.IntegrationTokenSecret,
+		RequireSignedState:   cfg.IsProduction(),
 	})
 	journeyRunner := &journeyrunner.Runner{
 		Repo: repo, Events: eventBus, Tick: cfg.JourneyRunnerInterval,
@@ -197,6 +202,7 @@ func main() {
 		Finance: financeClient, Users: usersClient,
 		DMS: dmsClient, Contracts: contractsClient, AI: aiClient, Bridge: bridgeSvc,
 		Integrations: integrationsSvc,
+		Procurement:  procurementClient,
 	}
 	engine := router.New(router.Options{
 		Cfg:          cfg,
