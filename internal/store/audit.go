@@ -153,13 +153,20 @@ func (r *Repository) ListBuyingSignals(ctx context.Context, limit int) ([]map[st
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var id, acctID, acctName, sigType, strength, action string
+		var id, acctName, sigType, strength, action string
+		// account_id is nullable (ON DELETE SET NULL); scanning NULL into a plain
+		// string errors, which surfaced as a 500 on GET /insights/signals.
+		var acctID *string
 		var at time.Time
 		if err := rows.Scan(&id, &acctID, &acctName, &sigType, &strength, &action, &at); err != nil {
 			return nil, err
 		}
+		accountID := ""
+		if acctID != nil {
+			accountID = *acctID
+		}
 		out = append(out, map[string]any{
-			"id": id, "account_id": acctID, "account": acctName,
+			"id": id, "account_id": accountID, "account": acctName,
 			"signal": sigType, "strength": strength, "action": action, "observed_at": at,
 		})
 	}

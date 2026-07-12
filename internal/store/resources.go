@@ -164,10 +164,10 @@ func (r *Repository) PatchQuote(ctx context.Context, id string, patch map[string
 
 func scanActivity(row pgx.Row) (models.Activity, error) {
 	var a models.Activity
-	var accountID, contactID, dealID *string
+	var accountID, contactID, dealID, outletRef *string
 	err := row.Scan(
 		&a.ID, &a.Type, &a.Subject, &a.Body, &accountID, &a.Account, &contactID, &dealID,
-		&a.OutletRef, &a.Owner, &a.OccurredAt, &a.CreatedAt,
+		&outletRef, &a.Owner, &a.OccurredAt, &a.CreatedAt,
 	)
 	if err != nil {
 		return a, err
@@ -180,6 +180,11 @@ func scanActivity(row pgx.Row) (models.Activity, error) {
 	}
 	if dealID != nil {
 		a.DealID = *dealID
+	}
+	// outlet_ref is a nullable column; scanning NULL into a plain string errors,
+	// which surfaced as a 500 on GET /activities whenever any row had no outlet.
+	if outletRef != nil {
+		a.OutletRef = *outletRef
 	}
 	return a, nil
 }
