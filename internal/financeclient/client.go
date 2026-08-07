@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,15 @@ import (
 
 	platformserviceauth "github.com/alvor-technologies/iag-platform-go/serviceauth"
 )
+
+// ErrARItemExists means finance already has an AR item for this documentRef
+// (HTTP 409). Because document_ref is unique per tenant in finance, this is the
+// idempotent "already booked" outcome — callers should treat it as success.
+//
+// Mirrors ErrAPItemExists in project-management's client: a synchronous caller
+// into the ledger needs the same retry semantics the event consumers get for
+// free from idempotency on event id.
+var ErrARItemExists = errors.New("ar item already exists for documentRef")
 
 // Client posts AR open items and reads customer statements.
 type Client struct {
@@ -94,6 +104,14 @@ func (c *Client) CreateARItem(ctx context.Context, in CreateARInput) (string, er
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusConflict {
+		// Finance holds a unique index on (tenant_id, document_ref), so a second
+		// attempt at the same AR item is refused rather than double-booked. That
+		// makes the conflict the success case for a retry: the item exists,
+		// which is what the caller wanted. Treating it as an error instead would
+		// have the caller retry forever against a booking that already happened.
+		return in.DocumentRef, ErrARItemExists
+	}
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("finance ar %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}

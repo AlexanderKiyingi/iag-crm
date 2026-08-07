@@ -3,6 +3,7 @@ package commerce
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -93,7 +94,11 @@ func BookDealAR(
 		Amount:            amount,
 		Currency:          currency,
 	})
-	if err != nil {
+	// A 409 means finance already holds this documentRef, which is the outcome
+	// a retry wants: the item is booked. Recording the link and stopping is
+	// correct; returning the error would leave the deal unlinked and invite
+	// another attempt against a booking that already exists.
+	if err != nil && !errors.Is(err, financeclient.ErrARItemExists) {
 		return "", err
 	}
 	_ = repo.SetDealFinanceARRef(ctx, deal.ID, ref)
@@ -139,7 +144,8 @@ func BookQuoteAR(
 		Amount:            amount,
 		Currency:          currency,
 	})
-	if err != nil {
+	// See the deal path above: a conflict is the idempotent success.
+	if err != nil && !errors.Is(err, financeclient.ErrARItemExists) {
 		return "", err
 	}
 	_ = repo.SetQuoteFinanceARRef(ctx, quote.ID, ref)
