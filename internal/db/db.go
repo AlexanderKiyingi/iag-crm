@@ -8,8 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	platformdb "github.com/alvor-technologies/iag-platform-go/db"
 )
 
 func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
@@ -24,20 +25,25 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse DATABASE_URL: %w", err)
 	}
-	cfg.MaxConns = intEnv("DB_MAX_CONNS", 50)
-	cfg.MinConns = intEnv("DB_MIN_CONNS", 2)
-	cfg.MaxConnLifetime = time.Hour
-	cfg.MaxConnIdleTime = 15 * time.Minute
-	cfg.ConnConfig.ConnectTimeout = 10 * time.Second
+	// Sizing comes from the shared platform package so every service is tuned
+	// through the same variables. The previous MaxConns default of 50 is kept
+	// deliberately rather than dropping to the package default of 10: cutting a
+	// busy service's pool fivefold is a capacity decision to make on measured
+	// evidence, not a side effect of a refactor.
+	pcfg := platformdb.ConfigFromEnv("crm, public")
+	pcfg.URL = url
+	if pcfg.MaxConns == 0 {
+		pcfg.MaxConns = 50
+	}
+	cfg, err = platformdb.BuildPoolConfig(pcfg)
+	if err != nil {
+		return nil, fmt.Errorf("parse DATABASE_URL: %w", err)
+	}
 
 	// Resolve unqualified names to this service's own schema first, falling back
 	// to public so legacy tables that still live there keep resolving. On the
 	// shared Railway database this isolates crm from the global public namespace
 	// and its single global schema_migrations ledger. See internal/migrate.
-	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		_, err := conn.Exec(ctx, `SET search_path TO crm, public`)
-		return err
-	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
