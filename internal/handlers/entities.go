@@ -484,8 +484,17 @@ func (h *API) CreateTicket(c *gin.Context) {
 			return e
 		}
 		if h.Events != nil {
-			return h.Events.EnqueueCommercial(ctx, events.TypeTicketCreated, map[string]any{
+			if e := h.Events.EnqueueCommercial(ctx, events.TypeTicketCreated, map[string]any{
 				"ticket_id": item.ID, "subject": item.Subject,
+			}, item.ID); e != nil {
+				return e
+			}
+			// Notify the support desk. Enqueued in the same transaction so the
+			// alert commits with the ticket, but best-effort: PublishAlert logs
+			// rather than returning, so a bus problem never fails the write.
+			h.Events.PublishAlert(ctx, "", events.DefaultNotifyRecipient(), "crm.alert", map[string]string{
+				"Title": "New support ticket: " + item.Subject,
+				"Body":  "Ticket " + item.ID + " was created: " + item.Subject,
 			}, item.ID)
 		}
 		return nil

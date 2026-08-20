@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +32,7 @@ const (
 	TypeCampaignLaunched = "crm.campaign.launched"
 	TypeJourneyEnrolled  = "crm.journey.enrolled"
 	TypeJourneyCompleted = "crm.journey.completed"
+	TypeAlertRaised      = "crm.alert.raised"
 )
 
 type Bus struct {
@@ -209,6 +211,37 @@ func (b *Bus) EnqueueCommercial(ctx context.Context, eventType string, data map[
 	return nil
 }
 
+// PublishAlert emits crm.alert.raised on iag.commercial for the notifications
+// policy consumer, using the shared {channel,recipient,templateId,variables}
+// envelope. It is a best-effort side channel — it goes through
+// PublishCommercial (which logs rather than returns) so a Kafka or outbox
+// problem never fails the domain write that raised the alert.
+func (b *Bus) PublishAlert(ctx context.Context, channel, recipient, templateID string, variables map[string]string, key string) {
+	if !b.Enabled() {
+		return
+	}
+	if recipient == "" {
+		warnNoNotifyRecipient()
+		return
+	}
+	if templateID == "" {
+		return
+	}
+	vars := map[string]any{}
+	for k, v := range variables {
+		vars[k] = v
+	}
+	if channel == "" {
+		channel = defaultNotifyChannel()
+	}
+	b.PublishCommercial(ctx, TypeAlertRaised, map[string]any{
+		"channel":    channel,
+		"recipient":  recipient,
+		"templateId": templateID,
+		"variables":  vars,
+	}, key)
+}
+
 func ParseBrokers(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
@@ -218,4 +251,30 @@ func ParseBrokers(raw string) []string {
 		}
 	}
 	return out
+}
+
+func defaultNotifyChannel() string {
+	if ch := strings.TrimSpace(os.Getenv("NOTIFY_CHANNEL")); ch != "" {
+		return ch
+	}
+	return "email"
+}
+
+// DefaultNotifyRecipient is the fallback recipient (the sales/support desk)
+// for alerts that have no specific user to address. Empty means alerts are
+// inert — warnNoNotifyRecipient says so once rather than dropping silently.
+func DefaultNotifyRecipient() string {
+	return strings.TrimSpace(os.Getenv("NOTIFY_DEFAULT_RECIPIENT"))
+}
+
+var notifyRecipientWarnOnce sync.Once
+
+// warnNoNotifyRecipient logs once when an alert is dropped for want of a
+// recipient. Without it an unset NOTIFY_DEFAULT_RECIPIENT looks identical to
+// "no alerts were raised" — the failure mode is invisible in both the logs and
+// the notifications service.
+func warnNoNotifyRecipient() {
+	notifyRecipientWarnOnce.Do(func() {
+		slog.Warn("crm alert dropped: no recipient and NOTIFY_DEFAULT_RECIPIENT is unset; crm.alert.raised events will not be emitted")
+	})
 }
