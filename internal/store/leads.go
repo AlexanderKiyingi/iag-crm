@@ -25,6 +25,7 @@ func (r *Repository) ListLeads(ctx context.Context, opts ListOpts) ([]models.Lea
 	where := []string{"1=1"}
 	args := []any{}
 	i := 1
+	where, args = applyScope(opts, "owner", where, args, &i)
 	if opts.Owner != "" {
 		where = append(where, fmt.Sprintf("owner = $%d", i))
 		args = append(args, opts.Owner)

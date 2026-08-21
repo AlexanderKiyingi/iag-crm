@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -51,15 +52,40 @@ func listOpts(c *gin.Context) store.ListOpts {
 	}
 }
 
+// scopedListOpts is the only way a handler should build ListOpts for a table
+// that carries an owner.
+//
+// The scope goes in ScopeOwner, never in Owner. Owner is the caller's own
+// ?owner= filter, and the previous version assigned the rep's email to it only
+// when the query string had left it blank — so `GET /deals?owner=someone@else`
+// simply skipped the scoping and returned another rep's pipeline. The control
+// was defeated by the very parameter it depended on, which is worse than no
+// control at all because it reads as if one is present.
+//
+// Now the two are separate and the store ANDs them: a rep may filter within
+// their own records and cannot widen beyond them, whatever they pass.
 func scopedListOpts(c *gin.Context) store.ListOpts {
 	opts := listOpts(c)
-	if claims, ok := middleware.Claims(c); ok && claims != nil {
-		role := models.RoleFromGroups(claims.Groups, claims.IsSuperuser)
-		if role == "sales_rep" && opts.Owner == "" && claims.Email != "" {
-			opts.Owner = claims.Email
-		}
-	}
+	opts.ScopeOwner = viewerScope(c)
 	return opts
+}
+
+// viewerScope returns the owner value a caller is confined to, or "" when they
+// may see everything.
+//
+// Empty means unrestricted, so a caller with no claims at all (service-to-service,
+// or a route mounted without auth) is not silently narrowed to nothing —
+// authentication is the middleware's job, and returning zero rows here would
+// mask a misconfiguration rather than surface it.
+func viewerScope(c *gin.Context) string {
+	claims, ok := middleware.Claims(c)
+	if !ok || claims == nil {
+		return ""
+	}
+	if models.RoleFromGroups(claims.Groups, claims.IsSuperuser) != "sales_rep" {
+		return ""
+	}
+	return strings.TrimSpace(claims.Email)
 }
 
 // enforceOwner applies the same row-level scoping as scopedListOpts to a single

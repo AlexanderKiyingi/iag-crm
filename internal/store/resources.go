@@ -305,6 +305,7 @@ func (r *Repository) ListTickets(ctx context.Context, opts ListOpts) ([]models.T
 	where := []string{"1=1"}
 	args := []any{}
 	i := 1
+	where, args = applyScope(opts, "owner", where, args, &i)
 	if opts.Status != "" {
 		where = append(where, fmt.Sprintf("status = $%d", i))
 		args = append(args, opts.Status)

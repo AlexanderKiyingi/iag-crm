@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -49,13 +51,25 @@ const moduleRecordCols = "id, module, name, owner, status, field_values, created
 
 func (r *Repository) ListModuleRecords(ctx context.Context, module string, opts ListOpts) ([]ModuleRecord, int, error) {
 	opts.Limit = clampLimit(opts.Limit)
+	// Custom modules (products, projects, documents, …) carry an owner like any
+	// other record, so they get the same enforced scope. This list used to be
+	// built from the unscoped listOpts, which meant a sales rep saw every custom
+	// record in the business even while their accounts and deals were scoped.
+	where := []string{"module = $1"}
+	args := []any{module}
+	i := 2
+	where, args = applyScope(opts, "owner", where, args, &i)
+	whereSQL := strings.Join(where, " AND ")
+
 	var total int
-	if err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_module_records WHERE module = $1`, module).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx,
+		`SELECT COUNT(*)::int FROM crm_module_records WHERE `+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
+	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `SELECT `+moduleRecordCols+`
-		FROM crm_module_records WHERE module = $1
-		ORDER BY created_at DESC LIMIT $2 OFFSET $3`, module, opts.Limit, opts.Offset)
+		FROM crm_module_records WHERE `+whereSQL+`
+		ORDER BY created_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
 		return nil, 0, err
 	}

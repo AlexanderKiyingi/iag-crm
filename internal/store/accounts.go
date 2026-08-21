@@ -72,11 +72,39 @@ func (r *Repository) NextID(ctx context.Context, prefix string, start int64) (st
 type ListOpts struct {
 	Limit  int
 	Offset int
+	// Owner is the caller's own filter, straight from ?owner=. It narrows a
+	// result set; it must never be able to widen one.
 	Owner  string
 	Stage  string
 	Status string
 	Search string
 	Type   string
+
+	// ScopeOwner is the ENFORCED visibility boundary, set from the caller's
+	// identity and never from request input.
+	//
+	// It is deliberately a separate field from Owner. Scoping used to work by
+	// defaulting Owner to the caller's email when the query string had not
+	// supplied one — which meant a sales rep could pass ?owner=someone@else and
+	// read another rep's records, because the parameter the scope relied on was
+	// the same one the caller controlled. Keeping them apart means the two are
+	// ANDed: a rep may filter within their own records, and cannot escape them.
+	ScopeOwner string
+}
+
+// applyScope appends the enforced owner predicate to a query's WHERE clause.
+//
+// Every list over an owner-bearing sales table calls this. It is a no-op when
+// no scope is set (managers, superusers, service callers), so the same query
+// serves both cases without a second code path to keep in sync.
+func applyScope(opts ListOpts, col string, where []string, args []any, i *int) ([]string, []any) {
+	if opts.ScopeOwner == "" {
+		return where, args
+	}
+	where = append(where, fmt.Sprintf("%s = $%d", col, *i))
+	args = append(args, opts.ScopeOwner)
+	*i++
+	return where, args
 }
 
 func clampLimit(limit int) int {
@@ -136,6 +164,7 @@ func (r *Repository) ListAccounts(ctx context.Context, opts ListOpts) ([]models.
 	where := []string{"1=1"}
 	args := []any{}
 	i := 1
+	where, args = applyScope(opts, "owner", where, args, &i)
 	if opts.Owner != "" {
 		where = append(where, fmt.Sprintf("owner = $%d", i))
 		args = append(args, opts.Owner)
@@ -329,6 +358,7 @@ func (r *Repository) ListContacts(ctx context.Context, opts ListOpts) ([]models.
 	where := []string{"1=1"}
 	args := []any{}
 	i := 1
+	where, args = applyScope(opts, "owner", where, args, &i)
 	if opts.Owner != "" {
 		where = append(where, fmt.Sprintf("owner = $%d", i))
 		args = append(args, opts.Owner)

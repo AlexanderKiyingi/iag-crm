@@ -18,7 +18,7 @@ import (
 
 func (h *API) ModuleRecordsList(c *gin.Context) {
 	module := c.Param("module")
-	items, total, err := h.Repo.ListModuleRecords(c.Request.Context(), module, listOpts(c))
+	items, total, err := h.Repo.ListModuleRecords(c.Request.Context(), module, scopedListOpts(c))
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "list records failed")
 		return
