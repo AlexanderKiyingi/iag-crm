@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	platformdb "github.com/alvor-technologies/iag-platform-go/db"
+
 	"github.com/iag/crm/backend/internal/models"
 )
 
@@ -34,8 +36,12 @@ func (r *Repository) ListAudit(ctx context.Context, limit int) ([]models.AuditEn
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	var total int
-	if err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_audit_entries`).Scan(&total); err != nil {
+	// Bounded: crm_audit_entries is append-only, so an unqualified COUNT(*) is
+	// a full scan that grows every month to put a number beside at most 200
+	// rows. A total equal to the cap means "at least this many".
+	total, _, err := platformdb.CountBounded(ctx, r.db(ctx), platformdb.DefaultCountCap,
+		"FROM crm_audit_entries")
+	if err != nil {
 		return nil, 0, err
 	}
 	rows, err := r.db(ctx).Query(ctx, `
@@ -131,8 +137,11 @@ func (r *Repository) ListAPIAuditLogs(ctx context.Context, limit int) ([]map[str
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	var total int
-	if err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_api_audit`).Scan(&total); err != nil {
+	// Bounded: crm_api_audit takes a row per API request, so this is the
+	// fastest-growing table in the service.
+	total, _, err := platformdb.CountBounded(ctx, r.db(ctx), platformdb.DefaultCountCap,
+		"FROM crm_api_audit")
+	if err != nil {
 		return nil, 0, err
 	}
 	items, err := r.APIMonitoringActivity(ctx, limit)
