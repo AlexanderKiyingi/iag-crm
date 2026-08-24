@@ -6,12 +6,12 @@ import (
 )
 
 const (
-	DealStageLead         = "lead"
-	DealStageQualified    = "qualified"
-	DealStageProposal     = "proposal"
-	DealStageNegotiation  = "negotiation"
-	DealStageWon          = "won"
-	DealStageLost         = "lost"
+	DealStageLead        = "lead"
+	DealStageQualified   = "qualified"
+	DealStageProposal    = "proposal"
+	DealStageNegotiation = "negotiation"
+	DealStageWon         = "won"
+	DealStageLost        = "lost"
 
 	AccountStatusActive  = "active"
 	AccountStatusNurture = "nurture"
@@ -52,35 +52,41 @@ type Account struct {
 }
 
 type Contact struct {
-	ID          string    `json:"id"`
-	AccountID   string    `json:"account_id,omitempty"`
-	Account     string    `json:"account"`
-	Name        string    `json:"name"`
-	Title       string    `json:"title"`
-	Email       string    `json:"email"`
-	Phone       string    `json:"phone"`
-	Owner       string    `json:"owner"`
-	BuyerRole   string    `json:"buyer_role,omitempty"`
-	Primary     bool      `json:"primary"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID        string `json:"id"`
+	AccountID string `json:"account_id,omitempty"`
+	Account   string `json:"account"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`
+	Email     string `json:"email"`
+	Phone     string `json:"phone"`
+	Owner     string `json:"owner"`
+	BuyerRole string `json:"buyer_role,omitempty"`
+	Primary   bool   `json:"primary"`
+	// Attrs is free-form overflow for client fields this service has no promoted
+	// column for. See db/migrations/0008_entity_attrs.sql.
+	Attrs     map[string]any `json:"attrs,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 type Lead struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Company   string    `json:"company"`
-	Email     string    `json:"email"`
-	Phone     string    `json:"phone"`
-	Source    string    `json:"source"`
-	Segment   string    `json:"segment"`
-	Region    string    `json:"region,omitempty"`
-	Score     int       `json:"score"`
-	Status    string    `json:"status"`
-	Owner     string    `json:"owner"`
-	Notes     string    `json:"notes,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Company string `json:"company"`
+	Email   string `json:"email"`
+	Phone   string `json:"phone"`
+	Source  string `json:"source"`
+	Segment string `json:"segment"`
+	Region  string `json:"region,omitempty"`
+	Score   int    `json:"score"`
+	Status  string `json:"status"`
+	Owner   string `json:"owner"`
+	Notes   string `json:"notes,omitempty"`
+	// Attrs is free-form overflow for client fields this service has no promoted
+	// column for. See db/migrations/0008_entity_attrs.sql.
+	Attrs     map[string]any `json:"attrs,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 type Deal struct {
@@ -101,8 +107,11 @@ type Deal struct {
 	Notes         string     `json:"notes,omitempty"`
 	FinanceARRef  string     `json:"finance_ar_ref,omitempty"`
 	AgeDays       int        `json:"age_days,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	// Attrs is free-form overflow for client fields this service has no promoted
+	// column for. See db/migrations/0008_entity_attrs.sql.
+	Attrs     map[string]any `json:"attrs,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 type QuoteLineItem struct {
@@ -126,27 +135,33 @@ type Quote struct {
 	Total        float64         `json:"total"`
 	Status       string          `json:"status"`
 	Version      int             `json:"version"`
-	Owner         string          `json:"owner"`
-	LineItems     []QuoteLineItem `json:"line_items"`
-	FinanceARRef  string          `json:"finance_ar_ref,omitempty"`
-	ContractRef   string          `json:"contract_ref,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	Owner        string          `json:"owner"`
+	LineItems    []QuoteLineItem `json:"line_items"`
+	FinanceARRef string          `json:"finance_ar_ref,omitempty"`
+	ContractRef  string          `json:"contract_ref,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 type Activity struct {
-	ID           string    `json:"id"`
-	Type         string    `json:"type"`
-	Subject      string    `json:"subject"`
-	Body         string    `json:"body,omitempty"`
-	AccountID    string    `json:"account_id,omitempty"`
-	Account      string    `json:"account,omitempty"`
-	ContactID    string    `json:"contact_id,omitempty"`
-	DealID       string    `json:"deal_id,omitempty"`
-	OutletRef    string    `json:"outlet_ref,omitempty"`
-	Owner        string    `json:"owner"`
-	OccurredAt   time.Time `json:"occurred_at"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	Type       string    `json:"type"`
+	Subject    string    `json:"subject"`
+	Body       string    `json:"body,omitempty"`
+	AccountID  string    `json:"account_id,omitempty"`
+	Account    string    `json:"account,omitempty"`
+	ContactID  string    `json:"contact_id,omitempty"`
+	DealID     string    `json:"deal_id,omitempty"`
+	OutletRef  string    `json:"outlet_ref,omitempty"`
+	Owner      string    `json:"owner"`
+	OccurredAt time.Time `json:"occurred_at"`
+	// DueAt and Status turn a logged interaction into a chaseable follow-up.
+	DueAt  *time.Time `json:"due_at,omitempty"`
+	Status string     `json:"status,omitempty"`
+	// Attrs is free-form overflow for client fields this service has no promoted
+	// column for. See db/migrations/0008_entity_attrs.sql.
+	Attrs     map[string]any `json:"attrs,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 type Ticket struct {
@@ -165,8 +180,13 @@ type Ticket struct {
 	Description string     `json:"description,omitempty"`
 	DmsClaimRef string     `json:"dms_claim_ref,omitempty"`
 	SlaDueAt    *time.Time `json:"sla_due_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+	Resolution  string     `json:"resolution,omitempty"`
+	// Attrs is free-form overflow for client fields this service has no promoted
+	// column for. See db/migrations/0008_entity_attrs.sql.
+	Attrs     map[string]any `json:"attrs,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 type Campaign struct {
@@ -202,25 +222,25 @@ type PipelineColumn struct {
 }
 
 type RangeMetrics struct {
-	Label          string `json:"label"`
-	Pipeline       string `json:"pipeline"`
-	PipelineDelta  string `json:"pipeline_delta"`
-	Outlets        string `json:"outlets"`
-	WinRate        string `json:"win_rate"`
-	Cycle          string `json:"cycle"`
-	NRR            string `json:"nrr"`
-	Series         []int  `json:"series"`
-	XLabels        []string `json:"x_labels"`
+	Label         string   `json:"label"`
+	Pipeline      string   `json:"pipeline"`
+	PipelineDelta string   `json:"pipeline_delta"`
+	Outlets       string   `json:"outlets"`
+	WinRate       string   `json:"win_rate"`
+	Cycle         string   `json:"cycle"`
+	NRR           string   `json:"nrr"`
+	Series        []int    `json:"series"`
+	XLabels       []string `json:"x_labels"`
 }
 
 type Bootstrap struct {
-	Service     string            `json:"service"`
-	Role        string            `json:"role"`
-	RoleLabel   string            `json:"role_label"`
-	Pages       []string          `json:"pages"`
-	Modals      []string          `json:"modals"`
-	PageTitles  map[string]string `json:"page_titles"`
-	SyncStatus  string            `json:"sync_status"`
+	Service    string            `json:"service"`
+	Role       string            `json:"role"`
+	RoleLabel  string            `json:"role_label"`
+	Pages      []string          `json:"pages"`
+	Modals     []string          `json:"modals"`
+	PageTitles map[string]string `json:"page_titles"`
+	SyncStatus string            `json:"sync_status"`
 }
 
 type ListMeta struct {

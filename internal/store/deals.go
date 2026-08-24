@@ -16,11 +16,13 @@ func scanDeal(row pgx.Row) (models.Deal, error) {
 	var accountID *string
 	var closeDate *time.Time
 	var financeAR *string
+	var attrs []byte
 	err := row.Scan(
 		&d.ID, &d.Name, &accountID, &d.Account, &d.Stage, &d.Probability, &d.Owner,
 		&d.Currency, &d.Amount, &d.AmountDisplay, &d.Description, &d.Source, &d.DmsLinked,
-		&closeDate, &d.Notes, &financeAR, &d.CreatedAt, &d.UpdatedAt,
+		&closeDate, &d.Notes, &financeAR, &attrs, &d.CreatedAt, &d.UpdatedAt,
 	)
+	d.Attrs = decodeAttrs(attrs)
 	if financeAR != nil {
 		d.FinanceARRef = *financeAR
 	}
@@ -75,7 +77,7 @@ func (r *Repository) ListDeals(ctx context.Context, opts ListOpts) ([]models.Dea
 	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, name, account_id, account_name, stage, probability, owner, currency, amount, amount_display,
-		       description, source, dms_linked, close_date, notes, finance_ar_ref, created_at, updated_at
+		       description, source, dms_linked, close_date, notes, finance_ar_ref, attrs, created_at, updated_at
 		FROM crm_deals WHERE `+whereSQL+` ORDER BY updated_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
 		return nil, 0, err
@@ -95,7 +97,7 @@ func (r *Repository) ListDeals(ctx context.Context, opts ListOpts) ([]models.Dea
 func (r *Repository) GetDeal(ctx context.Context, id string) (models.Deal, error) {
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, name, account_id, account_name, stage, probability, owner, currency, amount, amount_display,
-		       description, source, dms_linked, close_date, notes, finance_ar_ref, created_at, updated_at
+		       description, source, dms_linked, close_date, notes, finance_ar_ref, attrs, created_at, updated_at
 		FROM crm_deals WHERE id = $1
 	`, id)
 	return scanDeal(row)
@@ -116,6 +118,9 @@ type DealInput struct {
 	DmsLinked     bool       `json:"dms_linked"`
 	CloseDate     *time.Time `json:"close_date"`
 	Notes         string     `json:"notes"`
+	// Attrs carries client fields with no promoted column (linked sales order,
+	// …). See db/migrations/0008_entity_attrs.sql.
+	Attrs map[string]any `json:"attrs"`
 }
 
 func (r *Repository) CreateDeal(ctx context.Context, in DealInput) (models.Deal, error) {
@@ -148,10 +153,11 @@ func (r *Repository) CreateDeal(ctx context.Context, in DealInput) (models.Deal,
 	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_deals (
 			id, name, account_id, account_name, stage, probability, owner, currency, amount, amount_display,
-			description, source, dms_linked, close_date, notes, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)
+			description, source, dms_linked, close_date, notes, attrs, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)
 	`, id, in.Name, nullStr(accountID), accountName, in.Stage, in.Probability, in.Owner,
-		in.Currency, in.Amount, in.AmountDisplay, in.Description, in.Source, in.DmsLinked, in.CloseDate, in.Notes, now)
+		in.Currency, in.Amount, in.AmountDisplay, in.Description, in.Source, in.DmsLinked, in.CloseDate, in.Notes,
+		encodeAttrs(in.Attrs), now)
 	if err != nil {
 		return models.Deal{}, err
 	}
@@ -201,6 +207,14 @@ func (r *Repository) PatchDeal(ctx context.Context, id string, patch map[string]
 	}
 	if v, ok := patch["dms_linked"].(bool); ok {
 		add("dms_linked", v)
+	}
+	// close_date was create-only: a deal's expected close could be set once and
+	// never corrected, and the UI's edit form silently discarded it.
+	if v, ok := patch["close_date"]; ok {
+		add("close_date", parsePatchTime(v))
+	}
+	if attrs, ok := patchAttrs(patch); ok {
+		add("attrs", encodeAttrs(attrs))
 	}
 	if len(sets) == 1 {
 		return r.GetDeal(ctx, id)

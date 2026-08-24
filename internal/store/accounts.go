@@ -340,10 +340,12 @@ func (r *Repository) DeleteAccount(ctx context.Context, id string) error {
 func scanContact(row pgx.Row) (models.Contact, error) {
 	var c models.Contact
 	var accountID *string
+	var attrs []byte
 	err := row.Scan(
 		&c.ID, &accountID, &c.Account, &c.Name, &c.Title, &c.Email, &c.Phone,
-		&c.BuyerRole, &c.Owner, &c.Primary, &c.CreatedAt, &c.UpdatedAt,
+		&c.BuyerRole, &c.Owner, &c.Primary, &attrs, &c.CreatedAt, &c.UpdatedAt,
 	)
+	c.Attrs = decodeAttrs(attrs)
 	if err != nil {
 		return c, err
 	}
@@ -376,7 +378,7 @@ func (r *Repository) ListContacts(ctx context.Context, opts ListOpts) ([]models.
 	}
 	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `
-		SELECT id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, created_at, updated_at
+		SELECT id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, attrs, created_at, updated_at
 		FROM crm_contacts WHERE `+whereSQL+` ORDER BY name LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
 		return nil, 0, err
@@ -395,7 +397,7 @@ func (r *Repository) ListContacts(ctx context.Context, opts ListOpts) ([]models.
 
 func (r *Repository) GetContact(ctx context.Context, id string) (models.Contact, error) {
 	row := r.db(ctx).QueryRow(ctx, `
-		SELECT id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, created_at, updated_at
+		SELECT id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, attrs, created_at, updated_at
 		FROM crm_contacts WHERE id = $1
 	`, id)
 	return scanContact(row)
@@ -411,6 +413,9 @@ type ContactInput struct {
 	Owner     string `json:"owner"`
 	BuyerRole string `json:"buyer_role"`
 	Primary   bool   `json:"primary"`
+	// Attrs carries client fields with no promoted column (notes, active flag).
+	// See db/migrations/0008_entity_attrs.sql.
+	Attrs map[string]any `json:"attrs"`
 }
 
 func (r *Repository) CreateContact(ctx context.Context, in ContactInput) (models.Contact, error) {
@@ -429,9 +434,10 @@ func (r *Repository) CreateContact(ctx context.Context, in ContactInput) (models
 	}
 	now := time.Now().UTC()
 	_, err = r.db(ctx).Exec(ctx, `
-		INSERT INTO crm_contacts (id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
-	`, id, nullStr(accountID), accountName, in.Name, in.Title, in.Email, in.Phone, in.BuyerRole, in.Owner, in.Primary, now)
+		INSERT INTO crm_contacts (id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, attrs, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+	`, id, nullStr(accountID), accountName, in.Name, in.Title, in.Email, in.Phone, in.BuyerRole, in.Owner, in.Primary,
+		encodeAttrs(in.Attrs), now)
 	if err != nil {
 		return models.Contact{}, err
 	}
@@ -456,12 +462,27 @@ func (r *Repository) PatchContact(ctx context.Context, id string, patch map[stri
 	for _, field := range []struct{ key, col string }{
 		{"name", "name"}, {"title", "title"}, {"email", "email"}, {"phone", "phone"},
 		{"owner", "owner"}, {"buyer_role", "buyer_role"}, {"account_name", "account_name"},
+		// The read model exposes this column as `account`, and PatchDeal keys the
+		// same column on `account`. A caller that used either of those here wrote
+		// nothing and got a 200 back. Both keys are accepted; account_name wins
+		// when a caller sends both.
+		{"account", "account_name"},
 	} {
 		if v, ok := patch[field.key]; ok {
+			if field.key == "account" {
+				if _, dup := patch["account_name"]; dup {
+					continue
+				}
+			}
 			sets = append(sets, fmt.Sprintf("%s = $%d", field.col, i))
 			args = append(args, v)
 			i++
 		}
+	}
+	if attrs, ok := patchAttrs(patch); ok {
+		sets = append(sets, fmt.Sprintf("attrs = $%d", i))
+		args = append(args, encodeAttrs(attrs))
+		i++
 	}
 	if len(sets) == 0 {
 		return r.GetContact(ctx, id)

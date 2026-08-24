@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -59,6 +60,17 @@ func coerceScalarStrings(t reflect.Type, m map[string]any) {
 				// Blank numeric/bool form value clears the field: JSON null decodes
 				// to zero (value) or nil (pointer); "" would fail the unmarshal.
 				m[name] = nil
+				continue
+			}
+		}
+		// Dates are the same problem as numbers, and worse: a date input yields
+		// either "" (nothing picked) or "2026-08-24" (date only), and BOTH fail
+		// to unmarshal into time.Time — 400ing the entire request over one
+		// optional field, so a whole complaint is refused because nobody typed a
+		// resolved date. Blank clears; date-only widens to midnight UTC.
+		if ft == timeType {
+			if s, ok := val.(string); ok {
+				m[name] = coerceTimeString(s)
 				continue
 			}
 		}
@@ -141,4 +153,23 @@ func coerceJSONScalars(raw []byte, dst any) []byte {
 		}
 	}
 	return raw
+}
+
+var timeType = reflect.TypeOf(time.Time{})
+
+// coerceTimeString normalises a form date onto something time.Time will accept,
+// or nil to leave the field unset. An unparseable value becomes nil rather than
+// an error, matching how this file treats every other wrong-shaped scalar: the
+// field is dropped, the request still lands.
+func coerceTimeString(s string) any {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+	}
+	return nil
 }
