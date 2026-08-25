@@ -451,12 +451,23 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 func scanCampaign(row pgx.Row) (models.Campaign, error) {
 	var c models.Campaign
 	var starts, ends *time.Time
+	// budget_usd is nullable and CreateCampaign writes NULL for it whenever no
+	// budget was given (nullFloat turns 0 into nil). Scanning that into a plain
+	// float64 errors, and because the create re-reads the row it just inserted,
+	// EVERY campaign created without a budget failed with 500 "create campaign
+	// failed" — after the insert had already succeeded, so the transaction rolled
+	// it back and nothing was left to show for it. The seeded campaigns all carry
+	// a budget, which is why every read path looked healthy.
+	var budget *float64
 	err := row.Scan(
-		&c.ID, &c.Name, &c.Type, &c.Audience, &starts, &ends, &c.BudgetUSD, &c.Owner, &c.Goal, &c.Status,
+		&c.ID, &c.Name, &c.Type, &c.Audience, &starts, &ends, &budget, &c.Owner, &c.Goal, &c.Status,
 		&c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return c, err
+	}
+	if budget != nil {
+		c.BudgetUSD = *budget
 	}
 	c.StartsOn = starts
 	c.EndsOn = ends

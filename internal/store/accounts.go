@@ -136,13 +136,33 @@ func scanAccount(row pgx.Row) (models.Account, error) {
 	var amount *float64
 	var currency *string
 	var billingOrg, billingID, financeRef *string
+	// dms_ref, email, phone and address are all nullable, and CreateAccount
+	// writes NULL into dms_ref for any account with no DMS reference
+	// (nullStr turns "" into nil). Scanning NULL into a plain string errors, and
+	// a scan error on one row fails the whole query — so a single account
+	// created without a DMS ref would have taken down GET /accounts for
+	// everyone, not just its own record. The billing columns beside them were
+	// already read this way; these four were not.
+	var dmsRef, email, phone, address *string
 	err := row.Scan(
 		&a.ID, &a.Name, &a.Type, &a.Country, &a.Segment, &a.Owner,
 		&a.Value, &amount, &currency, &a.Health, &a.Status, &a.Bridged,
-		&a.DmsRef, &a.Email, &a.Phone, &a.Address,
+		&dmsRef, &email, &phone, &address,
 		&billingOrg, &billingID, &financeRef,
 		&a.LastTouchAt, &a.CreatedAt, &a.UpdatedAt,
 	)
+	if dmsRef != nil {
+		a.DmsRef = *dmsRef
+	}
+	if email != nil {
+		a.Email = *email
+	}
+	if phone != nil {
+		a.Phone = *phone
+	}
+	if address != nil {
+		a.Address = *address
+	}
 	if billingOrg != nil {
 		a.BillingOrgID = *billingOrg
 	}
