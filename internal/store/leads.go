@@ -13,12 +13,10 @@ import (
 
 func scanLead(row pgx.Row) (models.Lead, error) {
 	var l models.Lead
-	var attrs []byte
 	err := row.Scan(
 		&l.ID, &l.Name, &l.Company, &l.Email, &l.Phone, &l.Source, &l.Segment,
-		&l.Region, &l.Score, &l.Status, &l.Owner, &l.Notes, &attrs, &l.CreatedAt, &l.UpdatedAt,
+		&l.Region, &l.Score, &l.Status, &l.Owner, &l.Notes, &l.CreatedAt, &l.UpdatedAt,
 	)
-	l.Attrs = decodeAttrs(attrs)
 	return l, err
 }
 
@@ -45,7 +43,7 @@ func (r *Repository) ListLeads(ctx context.Context, opts ListOpts) ([]models.Lea
 	}
 	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `
-		SELECT id, name, company, email, phone, source, segment, region, score, status, owner, notes, attrs, created_at, updated_at
+		SELECT id, name, company, email, phone, source, segment, region, score, status, owner, notes, created_at, updated_at
 		FROM crm_leads WHERE `+whereSQL+` ORDER BY score DESC, created_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
 		return nil, 0, err
@@ -64,7 +62,7 @@ func (r *Repository) ListLeads(ctx context.Context, opts ListOpts) ([]models.Lea
 
 func (r *Repository) GetLead(ctx context.Context, id string) (models.Lead, error) {
 	row := r.db(ctx).QueryRow(ctx, `
-		SELECT id, name, company, email, phone, source, segment, region, score, status, owner, notes, attrs, created_at, updated_at
+		SELECT id, name, company, email, phone, source, segment, region, score, status, owner, notes, created_at, updated_at
 		FROM crm_leads WHERE id = $1
 	`, id)
 	return scanLead(row)
@@ -82,9 +80,6 @@ type LeadInput struct {
 	Notes   string `json:"notes"`
 	Score   int    `json:"score"`
 	Status  string `json:"status"`
-	// Attrs carries client fields with no promoted column (pipeline stage,
-	// estimated value, next follow-up …). See db/migrations/0008_entity_attrs.sql.
-	Attrs map[string]any `json:"attrs"`
 }
 
 func (r *Repository) CreateLead(ctx context.Context, in LeadInput) (models.Lead, error) {
@@ -100,9 +95,9 @@ func (r *Repository) CreateLead(ctx context.Context, in LeadInput) (models.Lead,
 	}
 	now := time.Now().UTC()
 	_, err = r.db(ctx).Exec(ctx, `
-		INSERT INTO crm_leads (id, name, company, email, phone, source, segment, region, score, status, owner, notes, attrs, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
-	`, id, in.Name, in.Company, in.Email, in.Phone, in.Source, in.Segment, in.Region, in.Score, in.Status, in.Owner, in.Notes, encodeAttrs(in.Attrs), now)
+		INSERT INTO crm_leads (id, name, company, email, phone, source, segment, region, score, status, owner, notes, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
+	`, id, in.Name, in.Company, in.Email, in.Phone, in.Source, in.Segment, in.Region, in.Score, in.Status, in.Owner, in.Notes, now)
 	if err != nil {
 		return models.Lead{}, err
 	}
@@ -128,9 +123,6 @@ func (r *Repository) PatchLead(ctx context.Context, id string, patch map[string]
 	}
 	if v, ok := patch["score"].(float64); ok {
 		add("score", int(v))
-	}
-	if attrs, ok := patchAttrs(patch); ok {
-		add("attrs", encodeAttrs(attrs))
 	}
 	if len(sets) == 1 {
 		return r.GetLead(ctx, id)
