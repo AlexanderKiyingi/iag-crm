@@ -278,14 +278,25 @@ func (r *Repository) CreateActivity(ctx context.Context, in ActivityInput) (mode
 func scanTicket(row pgx.Row) (models.Ticket, error) {
 	var t models.Ticket
 	var accountID, contactID, dealID *string
+	// outlet_ref and dms_claim_ref are nullable columns. Scanning NULL into a
+	// plain string errors, which surfaced as a 500 on GET /tickets whenever any
+	// row had no outlet or no DMS claim — the same defect already fixed for
+	// activities, which shares this file.
+	var outletRef, dmsClaimRef *string
 	var sla *time.Time
 	err := row.Scan(
-		&t.ID, &accountID, &t.Account, &contactID, &t.OutletRef, &dealID, &t.Subject, &t.Type,
-		&t.Priority, &t.Channel, &t.Status, &t.Owner, &t.Description, &t.DmsClaimRef, &sla,
+		&t.ID, &accountID, &t.Account, &contactID, &outletRef, &dealID, &t.Subject, &t.Type,
+		&t.Priority, &t.Channel, &t.Status, &t.Owner, &t.Description, &dmsClaimRef, &sla,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		return t, err
+	}
+	if outletRef != nil {
+		t.OutletRef = *outletRef
+	}
+	if dmsClaimRef != nil {
+		t.DmsClaimRef = *dmsClaimRef
 	}
 	if accountID != nil {
 		t.AccountID = *accountID
