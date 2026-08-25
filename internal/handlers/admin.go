@@ -11,12 +11,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/iag/crm/backend/internal/auth"
 	"github.com/iag/crm/backend/internal/bridge"
 	"github.com/iag/crm/backend/internal/events"
 	"github.com/iag/crm/backend/internal/middleware"
 	"github.com/iag/crm/backend/internal/models"
-	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *API) permissionContext(c *gin.Context) models.PermissionContext {
@@ -176,12 +176,25 @@ func (h *API) AdminBridgeSync(c *gin.Context) {
 func (h *API) PlatformStatus(c *gin.Context) {
 	busEnabled := h.Events != nil && h.Events.Enabled()
 	dbOK := h.Repo.Ping(c.Request.Context()) == nil
-	c.JSON(http.StatusOK, gin.H{
+	body := gin.H{
 		"service":           h.Cfg.ServiceName,
 		"database":          dbOK,
 		"event_bus_enabled": busEnabled,
 		"audience":          h.Cfg.Audience,
-	})
+	}
+	// Which migrations the database has actually had applied. `database: true`
+	// only says the connection works; it says nothing about whether the schema
+	// matches the binary reading it. When a deploy ships a migration and the
+	// code using its columns together, and migrations are not applied on deploy,
+	// the service stays up and healthy while every query naming a new column
+	// 500s — and there is no way to see that from the outside. This is that way.
+	if status, err := h.Repo.SchemaStatus(c.Request.Context()); err == nil {
+		body["latest_migration"] = status.LatestMigration
+		body["applied_migrations"] = status.AppliedMigrations
+	} else {
+		body["latest_migration"] = "unknown"
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 func (h *API) InsightsSignals(c *gin.Context) {
