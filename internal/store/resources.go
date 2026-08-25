@@ -387,7 +387,7 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_tickets (id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type,
 			priority, channel, status, owner, description, sla_due_at, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)
 	`, id, nullStr(accountID), in.Account, nullStr(in.ContactID), nullStr(in.OutletRef), nullStr(in.DealID),
 		in.Subject, in.Type, in.Priority, in.Channel, status, in.Owner, in.Description, sla, now)
 	if err != nil {
