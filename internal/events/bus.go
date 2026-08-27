@@ -15,20 +15,20 @@ import (
 )
 
 const (
-	SpecVersion = "1.0"
-	Source      = "iag.crm"
+	SpecVersion     = "1.0"
+	Source          = "iag.crm"
 	TopicCommercial = "iag.commercial"
 
-	TypeDealUpdated     = "crm.deal.updated"
-	TypeDealWon         = "crm.deal.won"
-	TypeLeadConverted   = "crm.lead.converted"
-	TypeBridgeSynced    = "crm.bridge.synced"
-	TypeTicketCreated   = "crm.ticket.created"
-	TypeTierRulesSaved  = "crm.loyalty.tier_rules.saved"
-	TypeQuoteSent       = "crm.quote.sent"
-	TypeQuoteSigned     = "crm.quote.signed"
-	TypeAccountCreated  = "crm.account.created"
-	TypeContactCreated  = "crm.contact.created"
+	TypeDealUpdated      = "crm.deal.updated"
+	TypeDealWon          = "crm.deal.won"
+	TypeLeadConverted    = "crm.lead.converted"
+	TypeBridgeSynced     = "crm.bridge.synced"
+	TypeTicketCreated    = "crm.ticket.created"
+	TypeTierRulesSaved   = "crm.loyalty.tier_rules.saved"
+	TypeQuoteSent        = "crm.quote.sent"
+	TypeQuoteSigned      = "crm.quote.signed"
+	TypeAccountCreated   = "crm.account.created"
+	TypeContactCreated   = "crm.contact.created"
 	TypeCampaignLaunched = "crm.campaign.launched"
 	TypeJourneyEnrolled  = "crm.journey.enrolled"
 	TypeJourneyCompleted = "crm.journey.completed"
@@ -132,8 +132,11 @@ func (b *Bus) publish(ctx context.Context, evt PlatformEvent, key string) error 
 	if err != nil {
 		return err
 	}
+	// No Topic on the Message: the writer is dedicated to one topic and already
+	// carries it, and kafka-go rejects a Message that sets Topic as well ("Topic
+	// must not be specified for both Writer and Message"). It fails before
+	// sending, so every publish errored while looking transient to the retry loop.
 	return b.writer.WriteMessages(ctx, kafka.Message{
-		Topic: TopicCommercial,
 		Key:   []byte(eventKey(key, evt)),
 		Value: body,
 		Headers: []kafka.Header{
@@ -164,8 +167,11 @@ func (b *Bus) DispatchOutbox(ctx context.Context, eventType string, eventKey str
 	if key == "" {
 		key = evt.ID
 	}
+	// No Topic on the Message: the writer is dedicated to one topic and already
+	// carries it, and kafka-go rejects a Message that sets Topic as well ("Topic
+	// must not be specified for both Writer and Message"). It fails before
+	// sending, so every publish errored while looking transient to the retry loop.
 	return b.writer.WriteMessages(ctx, kafka.Message{
-		Topic: TopicCommercial,
 		Key:   []byte(key),
 		Value: body,
 		Headers: []kafka.Header{
