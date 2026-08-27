@@ -86,7 +86,7 @@ func Load() (Config, error) {
 		AIAPIURL:                  aiAPIURL(publicAPI, envOr("AI_API_URL", "")),
 		AIAudience:                envOr("AI_AUDIENCE", "iag.ai-platform"),
 		AutoMigrate:               envOr("AUTO_MIGRATE", "true") != "false",
-		SeedOnEmpty:               envOr("SEED_ON_EMPTY", "true") != "false",
+		SeedOnEmpty:               seedOnEmpty(env),
 		ReadTimeout:               30 * time.Second,
 		WriteTimeout:              30 * time.Second,
 		EventBusEnabled:           strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
@@ -105,6 +105,17 @@ func Load() (Config, error) {
 		cfg.KafkaBrokers = []string{"127.0.0.1:19092"}
 	}
 	return cfg, cfg.Validate()
+}
+
+// seedOnEmpty reports whether CRM demo data may be written at boot. Production
+// never seeds: the demo accounts, contacts and deals were purged and must not
+// come back, so the environment check wins over SEED_ON_EMPTY rather than
+// merely defaulting it. Elsewhere the flag still applies, defaulting on.
+func seedOnEmpty(env string) bool {
+	if env == "production" || env == "prod" {
+		return false
+	}
+	return envOr("SEED_ON_EMPTY", "true") != "false"
 }
 
 func (c Config) Validate() error {

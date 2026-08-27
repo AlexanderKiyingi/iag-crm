@@ -167,7 +167,7 @@ func (r *Repository) ListExportCustomers(ctx context.Context, opts ListOpts) ([]
 }
 
 func (r *Repository) CreateExportCustomer(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "EXP", 100)
+	id := r.NewID()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_export_customers (id, name, country, currency, incoterms, credit_limit, erp_ref, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
@@ -202,7 +202,7 @@ func (r *Repository) ListLoyaltyOutlets(ctx context.Context, opts ListOpts) ([]m
 }
 
 func (r *Repository) CreateLoyaltyPromotion(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "PRM", 100)
+	id := r.NewID()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_loyalty_promotions (id, name, tier_id, discount, status, created_at)
 		VALUES ($1,$2,$3,$4,'draft',NOW())

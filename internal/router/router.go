@@ -48,6 +48,7 @@ func New(opts Options) *gin.Engine {
 		v1.Use(opts.PlatformAuth.AttachPrincipal())
 	}
 	v1.Use(middleware.RequestAudit(opts.Repo))
+	v1.Use(middleware.ResolveLegacyID(opts.Repo))
 
 	registerPlatformRoutes(v1, api)
 	registerDashboardRoutes(v1, api)

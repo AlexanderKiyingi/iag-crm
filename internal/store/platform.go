@@ -24,11 +24,8 @@ func (r *Repository) UpsertOutletFromDMS(ctx context.Context, o dmsclient.Outlet
 		`, o.ID, o.Name, o.Address, o.Channel, scoreToHealth(o.Score))
 		return false, false, err
 	}
-	id, err := r.NextID(ctx, "OUT", 2000)
-	if err != nil {
-		return false, false, err
-	}
-	_, err = r.db(ctx).Exec(ctx, `
+	id := r.NewID()
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_outlets (id, name, dms_ref, city, segment, health, owner, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,'',NOW(),NOW())
 	`, id, o.Name, o.ID, o.Address, o.Channel, scoreToHealth(o.Score))
@@ -59,11 +56,8 @@ func (r *Repository) EnsurePendingImport(ctx context.Context, dmsOutletID, name 
 	if exists {
 		return false, nil
 	}
-	id, err := r.NextID(ctx, "IMP", 100)
-	if err != nil {
-		return false, err
-	}
-	_, err = r.db(ctx).Exec(ctx, `
+	id := r.NewID()
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_bridge_pending_imports (id, dms_outlet_id, channel, beat, status, created_at)
 		VALUES ($1,$2,'DMS','auto','pending',NOW())
 	`, id, dmsOutletID)

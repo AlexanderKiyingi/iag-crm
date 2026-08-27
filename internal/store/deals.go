@@ -119,10 +119,7 @@ type DealInput struct {
 }
 
 func (r *Repository) CreateDeal(ctx context.Context, in DealInput) (models.Deal, error) {
-	id, err := r.NextID(ctx, "DEAL", 500)
-	if err != nil {
-		return models.Deal{}, err
-	}
+	id := r.NewID()
 	accountID := in.AccountID
 	accountName := in.Account
 	if accountID == "" && accountName != "" {
@@ -145,7 +142,7 @@ func (r *Repository) CreateDeal(ctx context.Context, in DealInput) (models.Deal,
 		in.AmountDisplay = formatAmount(in.Currency, in.Amount)
 	}
 	now := time.Now().UTC()
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_deals (
 			id, name, account_id, account_name, stage, probability, owner, currency, amount, amount_display,
 			description, source, dms_linked, close_date, notes, created_at, updated_at

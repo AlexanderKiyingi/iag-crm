@@ -87,10 +87,7 @@ type QuoteInput struct {
 }
 
 func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quote, error) {
-	id, err := r.NextID(ctx, "QTE", 500)
-	if err != nil {
-		return models.Quote{}, err
-	}
+	id := r.NewID()
 	if in.Ref == "" {
 		in.Ref = id
 	}
@@ -107,7 +104,7 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 	}
 	lineRaw, _ := json.Marshal(in.LineItems)
 	now := time.Now().UTC()
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_quotes (id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
 			valid_until, total, status, version, owner, line_items, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'draft',1,$12,$13,$14,$14)
@@ -246,10 +243,7 @@ type ActivityInput struct {
 }
 
 func (r *Repository) CreateActivity(ctx context.Context, in ActivityInput) (models.Activity, error) {
-	id, err := r.NextID(ctx, "ACT", 1000)
-	if err != nil {
-		return models.Activity{}, err
-	}
+	id := r.NewID()
 	if in.OccurredAt.IsZero() {
 		in.OccurredAt = time.Now().UTC()
 	}
@@ -261,7 +255,7 @@ func (r *Repository) CreateActivity(ctx context.Context, in ActivityInput) (mode
 		}
 		accountID = resolved
 	}
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_activities (id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
 	`, id, in.Type, in.Subject, in.Body, nullStr(accountID), in.Account, nullStr(in.ContactID), nullStr(in.DealID), nullStr(in.OutletRef), in.Owner, in.OccurredAt)
@@ -363,10 +357,7 @@ type TicketInput struct {
 }
 
 func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.Ticket, error) {
-	id, err := r.NextID(ctx, "TKT", 300)
-	if err != nil {
-		return models.Ticket{}, err
-	}
+	id := r.NewID()
 	if in.Priority == "" {
 		in.Priority = "P2"
 	}
@@ -384,7 +375,7 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 	}
 	sla := time.Now().UTC().Add(24 * time.Hour)
 	now := time.Now().UTC()
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_tickets (id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type,
 			priority, channel, status, owner, description, sla_due_at, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)
@@ -551,16 +542,13 @@ func (r *Repository) PatchCampaign(ctx context.Context, id string, patch map[str
 }
 
 func (r *Repository) CreateCampaign(ctx context.Context, in CampaignInput) (models.Campaign, error) {
-	id, err := r.NextID(ctx, "CMP", 100)
-	if err != nil {
-		return models.Campaign{}, err
-	}
+	id := r.NewID()
 	now := time.Now().UTC()
 	status := in.Status
 	if status == "" {
 		status = "draft"
 	}
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_campaigns (id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
 	`, id, in.Name, in.Type, in.Audience, in.StartsOn, in.EndsOn, nullFloat(in.BudgetUSD), in.Owner, in.Goal, status, now)

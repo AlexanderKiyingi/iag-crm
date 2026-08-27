@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -55,18 +56,11 @@ func (r *Repository) IsEmpty(ctx context.Context) (bool, error) {
 	return n == 0, err
 }
 
-func (r *Repository) NextID(ctx context.Context, prefix string, start int64) (string, error) {
-	var n int64
-	err := r.db(ctx).QueryRow(ctx, `
-		INSERT INTO crm_id_counters (prefix, next_value)
-		VALUES ($1, $2)
-		ON CONFLICT (prefix) DO UPDATE SET next_value = crm_id_counters.next_value + 1
-		RETURNING next_value
-	`, prefix, start).Scan(&n)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s-%04d", prefix, n), nil
+// NewID mints a primary key. CRM used to draw prefixed, sequential ids from
+// crm_id_counters (ACC-0500, LEAD-0200); ids are uuid across the platform now,
+// so the counter table and its prefixes are gone.
+func (r *Repository) NewID() string {
+	return uuid.NewString()
 }
 
 type ListOpts struct {
@@ -268,10 +262,7 @@ type AccountInput struct {
 }
 
 func (r *Repository) CreateAccount(ctx context.Context, in AccountInput) (models.Account, error) {
-	id, err := r.NextID(ctx, "ACC", 500)
-	if err != nil {
-		return models.Account{}, err
-	}
+	id := r.NewID()
 	now := time.Now().UTC()
 	if in.Status == "" {
 		in.Status = models.AccountStatusActive
@@ -279,7 +270,7 @@ func (r *Repository) CreateAccount(ctx context.Context, in AccountInput) (models
 	if in.Type == "" {
 		in.Type = "Export"
 	}
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_accounts (
 			id, name, account_type, country, segment, owner, value_display,
 			value_amount, value_currency, health_score, status, dms_bridged,
@@ -434,10 +425,7 @@ type ContactInput struct {
 }
 
 func (r *Repository) CreateContact(ctx context.Context, in ContactInput) (models.Contact, error) {
-	id, err := r.NextID(ctx, "CON", 1200)
-	if err != nil {
-		return models.Contact{}, err
-	}
+	id := r.NewID()
 	accountID := in.AccountID
 	accountName := in.Account
 	if accountID == "" && accountName != "" {
@@ -448,7 +436,7 @@ func (r *Repository) CreateContact(ctx context.Context, in ContactInput) (models
 		accountID = aid
 	}
 	now := time.Now().UTC()
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_contacts (id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
 	`, id, nullStr(accountID), accountName, in.Name, in.Title, in.Email, in.Phone, in.BuyerRole, in.Owner, in.Primary, now)

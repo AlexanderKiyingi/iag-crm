@@ -11,12 +11,9 @@ import (
 )
 
 func (r *Repository) AppendAudit(ctx context.Context, action, detail, userName string) (models.AuditEntry, error) {
-	id, err := r.NextID(ctx, "AUD", 1000)
-	if err != nil {
-		return models.AuditEntry{}, err
-	}
+	id := r.NewID()
 	now := time.Now().UTC()
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_audit_entries (id, logged_at, user_name, action, detail)
 		VALUES ($1, $2, $3, $4, $5)
 	`, id, now, userName, action, detail)
@@ -286,11 +283,8 @@ func (r *Repository) MonitoringSummaryWithBus(ctx context.Context, busEnabled bo
 }
 
 func (r *Repository) AppendBridgeSyncLog(ctx context.Context, message string) error {
-	id, err := r.NextID(ctx, "SYN", 800)
-	if err != nil {
-		return err
-	}
-	_, err = r.db(ctx).Exec(ctx, `
+	id := r.NewID()
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_bridge_sync_log (id, stream_id, level, message, created_at)
 		VALUES ($1, 'all', 'info', $2, NOW())
 	`, id, message)

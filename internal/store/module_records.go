@@ -92,13 +92,10 @@ func (r *Repository) GetModuleRecord(ctx context.Context, module, id string) (Mo
 }
 
 func (r *Repository) CreateModuleRecord(ctx context.Context, module string, in ModuleRecordInput) (ModuleRecord, error) {
-	id, err := r.NextID(ctx, "MREC", 1000)
-	if err != nil {
-		return ModuleRecord{}, err
-	}
+	id := r.NewID()
 	valuesRaw, _ := json.Marshal(coalesceMap(in.Values))
 	now := time.Now().UTC()
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_module_records (id, module, name, owner, status, field_values, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
 	`, id, module, in.Name, in.Owner, in.Status, valuesRaw, now)

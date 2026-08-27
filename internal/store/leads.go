@@ -83,10 +83,7 @@ type LeadInput struct {
 }
 
 func (r *Repository) CreateLead(ctx context.Context, in LeadInput) (models.Lead, error) {
-	id, err := r.NextID(ctx, "LEAD", 200)
-	if err != nil {
-		return models.Lead{}, err
-	}
+	id := r.NewID()
 	if in.Status == "" {
 		in.Status = "qualifying"
 	}
@@ -94,7 +91,7 @@ func (r *Repository) CreateLead(ctx context.Context, in LeadInput) (models.Lead,
 		in.Score = 65
 	}
 	now := time.Now().UTC()
-	_, err = r.db(ctx).Exec(ctx, `
+	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_leads (id, name, company, email, phone, source, segment, region, score, status, owner, notes, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
 	`, id, in.Name, in.Company, in.Email, in.Phone, in.Source, in.Segment, in.Region, in.Score, in.Status, in.Owner, in.Notes, now)

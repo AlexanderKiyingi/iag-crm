@@ -91,13 +91,10 @@ func (r *Repository) listNamed(ctx context.Context, table string, extraCols stri
 	return out, total, rows.Err()
 }
 
-func (r *Repository) createNamed(ctx context.Context, table, prefix string, start int64, name string, extraJSON []byte) (NamedRow, error) {
-	id, err := r.NextID(ctx, prefix, start)
-	if err != nil {
-		return NamedRow{}, err
-	}
+func (r *Repository) createNamed(ctx context.Context, table, name string, extraJSON []byte) (NamedRow, error) {
+	id := r.NewID()
 	now := time.Now().UTC()
-	_, err = r.db(ctx).Exec(ctx,
+	_, err := r.db(ctx).Exec(ctx,
 		fmt.Sprintf(`INSERT INTO %s (id, name, extra, created_at, updated_at) VALUES ($1,$2,$3,$4,$4)`, table),
 		id, name, extraJSON, now)
 	if err != nil {
@@ -126,7 +123,7 @@ func (r *Repository) ListSegments(ctx context.Context, opts ListOpts) ([]map[str
 }
 
 func (r *Repository) CreateSegment(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "SEG", 100)
+	id := r.NewID()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_segments (id, name, kind, refresh, rules, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
@@ -142,7 +139,7 @@ func (r *Repository) ListJourneys(ctx context.Context, opts ListOpts) ([]map[str
 }
 
 func (r *Repository) CreateJourney(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "JRN", 100)
+	id := r.NewID()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_journeys (id, name, trigger, template, goal, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
@@ -158,7 +155,7 @@ func (r *Repository) ListPersonas(ctx context.Context, opts ListOpts) ([]map[str
 }
 
 func (r *Repository) CreatePersona(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "PSN", 100)
+	id := r.NewID()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_personas (id, name, buyer_role, region, seniority, content_tags, story, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
@@ -174,7 +171,7 @@ func (r *Repository) ListEvents(ctx context.Context, opts ListOpts) ([]map[strin
 }
 
 func (r *Repository) CreateEvent(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "EVT", 100)
+	id := r.NewID()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_events (id, name, event_type, city, budget_usd, mql_target, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
@@ -190,7 +187,7 @@ func (r *Repository) ListContentAssets(ctx context.Context, opts ListOpts) ([]ma
 }
 
 func (r *Repository) CreateContentAsset(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "AST", 100)
+	id := r.NewID()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_content_assets (id, name, asset_type, format, tags, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
@@ -206,7 +203,7 @@ func (r *Repository) ListEmailSends(ctx context.Context, opts ListOpts) ([]map[s
 }
 
 func (r *Repository) CreateEmailSend(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "EML", 100)
+	id := r.NewID()
 	status := str(in, "status")
 	if status == "" {
 		status = "draft"
@@ -233,7 +230,7 @@ func (r *Repository) ListSocialPosts(ctx context.Context, opts ListOpts) ([]map[
 }
 
 func (r *Repository) CreateSocialPost(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "SOC", 100)
+	id := r.NewID()
 	platforms := str(in, "platforms")
 	if platforms == "" {
 		network := str(in, "network")
@@ -290,7 +287,7 @@ func (r *Repository) ListSEOKeywords(ctx context.Context, opts ListOpts) ([]map[
 }
 
 func (r *Repository) CreateSEOKeyword(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "KW", 100)
+	id := r.NewID()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_seo_keywords (id, term, intent, locale, landing_page, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
@@ -306,7 +303,7 @@ func (r *Repository) ListBudgetPlans(ctx context.Context, opts ListOpts) ([]map[
 }
 
 func (r *Repository) CreateBudgetPlan(ctx context.Context, in map[string]any) (map[string]any, error) {
-	id, _ := r.NextID(ctx, "BDG", 100)
+	id := r.NewID()
 	ch, _ := json.Marshal(in["channels"])
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_budget_plans (id, name, quarter, owner, channels, mql_target, sql_target, won_target, created_at, updated_at)

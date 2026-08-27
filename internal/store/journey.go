@@ -58,10 +58,7 @@ func (r *Repository) ListJourneySteps(ctx context.Context, journeyID string) ([]
 }
 
 func (r *Repository) CreateJourneyStep(ctx context.Context, journeyID string, in map[string]any) (JourneyStep, error) {
-	id, err := r.NextID(ctx, "JST", 100)
-	if err != nil {
-		return JourneyStep{}, err
-	}
+	id := r.NewID()
 	order := intNum(in, "step_order")
 	if order <= 0 {
 		var max int
@@ -73,7 +70,7 @@ func (r *Repository) CreateJourneyStep(ctx context.Context, journeyID string, in
 		stepType = "wait"
 	}
 	cfg, _ := json.Marshal(in["config"])
-	_, err = r.pool.Exec(ctx, `
+	_, err := r.pool.Exec(ctx, `
 		INSERT INTO crm_journey_steps (id, journey_id, step_order, step_type, title, config, delay_hours, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,NOW(),NOW())
 	`, id, journeyID, order, stepType, str(in, "title"), cfg, intNum(in, "delay_hours"))
@@ -158,12 +155,9 @@ func (r *Repository) EnrollInJourney(ctx context.Context, journeyID string, in E
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return JourneyEnrollment{}, err
 	}
-	id, err := r.NextID(ctx, "ENR", 1000)
-	if err != nil {
-		return JourneyEnrollment{}, err
-	}
+	id := r.NewID()
 	now := time.Now().UTC()
-	_, err = r.pool.Exec(ctx, `
+	_, err := r.pool.Exec(ctx, `
 		INSERT INTO crm_journey_enrollments (
 			id, journey_id, contact_id, lead_id, subject_email, subject_name,
 			status, current_step, next_run_at, enrolled_at, updated_at
