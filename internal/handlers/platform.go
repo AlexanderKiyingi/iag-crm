@@ -139,7 +139,7 @@ func (h *API) Ready(c *gin.Context) {
 func (h *API) Notifications(c *gin.Context) {
 	items, err := h.Repo.LiveNotifications(c.Request.Context(), 9)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"data": store.Notifications()})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "notifications failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -163,7 +163,8 @@ func (h *API) Overview(c *gin.Context) {
 	rangeKey := c.DefaultQuery("range", "week")
 	metrics, err := h.Repo.ComputeOverviewMetrics(c.Request.Context(), rangeKey)
 	if err != nil {
-		metrics = store.OverviewMetrics(rangeKey)
+		apierr.JSONStatus(c, http.StatusInternalServerError, "overview failed")
+		return
 	}
 	summary, err := h.Repo.PipelineSummary(c.Request.Context())
 	if err != nil {

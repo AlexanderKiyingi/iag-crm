@@ -335,7 +335,7 @@ func (r *Repository) LiveNotifications(ctx context.Context, limit int) ([]models
 		return nil, err
 	}
 	defer rows.Close()
-	var out []models.Notification
+	out := []models.Notification{}
 	for rows.Next() {
 		var kind, subject, owner string
 		var at time.Time
@@ -346,14 +346,7 @@ func (r *Repository) LiveNotifications(ctx context.Context, limit int) ([]models
 			Kind: "crm", Icon: "•", Title: subject, Body: owner, Time: relativeTouch(at), Go: "activities",
 		})
 	}
-	if len(out) == 0 {
-		return storeNotificationsFallback(), nil
-	}
 	return out, nil
-}
-
-func storeNotificationsFallback() []models.Notification {
-	return Notifications()
 }
 
 // ComputeOverviewMetrics derives dashboard metrics from live data.
@@ -379,10 +372,12 @@ func (r *Repository) ComputeOverviewMetrics(ctx context.Context, rangeKey string
 	if err == nil {
 		metrics = mergeOverviewMetrics(metrics, series, labels)
 	} else {
-		fallback := OverviewMetrics(rangeKey)
-		metrics.Series = fallback.Series
-		metrics.XLabels = fallback.XLabels
-		metrics.PipelineDelta = fallback.PipelineDelta
+		// The headline figures above are real. A fabricated series was grafted on
+		// here when pipelineSeries failed, which left invented movement sitting
+		// beside live totals in one payload with nothing to tell them apart. The
+		// series is now left empty and the client simply renders no chart.
+		metrics.Series = []int{}
+		metrics.XLabels = []string{}
 	}
 	return metrics, nil
 }

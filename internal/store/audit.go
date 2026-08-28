@@ -157,7 +157,7 @@ func (r *Repository) ListBuyingSignals(ctx context.Context, limit int) ([]map[st
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, acctName, sigType, strength, action string
 		// account_id is nullable (ON DELETE SET NULL); scanning NULL into a plain
@@ -176,18 +176,7 @@ func (r *Repository) ListBuyingSignals(ctx context.Context, limit int) ([]map[st
 			"signal": sigType, "strength": strength, "action": action, "observed_at": at,
 		})
 	}
-	if len(out) == 0 {
-		return defaultBuyingSignals(), nil
-	}
 	return out, rows.Err()
-}
-
-func defaultBuyingSignals() []map[string]any {
-	return []map[string]any{
-		{"id": "SIG-001", "account": "Seoul Bean Lab", "signal": "Quote re-opened 4×", "strength": "high", "action": "Schedule follow-up call"},
-		{"id": "SIG-002", "account": "Capital Shoppers", "signal": "Reorder 6 days early", "strength": "high", "action": "Propose volume tier upgrade"},
-		{"id": "SIG-003", "account": "Matsuri Trading", "signal": "Contract PDF downloaded", "strength": "medium", "action": "Send pricing clarification"},
-	}
 }
 
 func (r *Repository) GetLoyaltyTierRules(ctx context.Context) (map[string]any, error) {
