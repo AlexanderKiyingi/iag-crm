@@ -101,7 +101,14 @@ func applyScope(opts ListOpts, col string, where []string, args []any, i *int) (
 	return where, args
 }
 
-func clampLimit(limit int) int {
+// ClampLimit is the page size a list query will actually apply: the default
+// when none was asked for, and the ceiling when too much was.
+//
+// Exported so the handler can report the effective limit rather than the
+// requested one. `meta.limit` echoing an unclamped 500 tells a paging client it
+// received 500 rows when the store returned 200, and it advances its offset by
+// 500 — silently skipping 300 records on every page.
+func ClampLimit(limit int) int {
 	if limit <= 0 {
 		return 50
 	}
@@ -110,6 +117,8 @@ func clampLimit(limit int) int {
 	}
 	return limit
 }
+
+func clampLimit(limit int) int { return ClampLimit(limit) }
 
 func relativeTouch(t time.Time) string {
 	diff := time.Since(t)

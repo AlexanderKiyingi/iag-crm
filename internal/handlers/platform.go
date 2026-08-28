@@ -112,7 +112,8 @@ func paginated[T any](c *gin.Context, data []T, total int) {
 	opts := scopedListOpts(c)
 	c.JSON(http.StatusOK, models.Paginated[T]{
 		Data: data,
-		Meta: models.ListMeta{Total: total, Limit: opts.Limit, Offset: opts.Offset},
+		// The applied limit, not the requested one — see store.ClampLimit.
+		Meta: models.ListMeta{Total: total, Limit: store.ClampLimit(opts.Limit), Offset: opts.Offset},
 	})
 }
 
