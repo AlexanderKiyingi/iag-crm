@@ -213,6 +213,23 @@ func (r *Repository) PatchDeal(ctx context.Context, id string, patch map[string]
 	if attrs, ok := patchAttrs(patch); ok {
 		add("attrs", encodeAttrs(attrs))
 	}
+	// Re-point the foreign key when the account changes. `account` writes
+	// account_name only, so moving a deal to another customer left account_id on
+	// the previous account — and account_id is what /accounts/:id/360, the
+	// pipeline board and every rollup actually join on. The display name said one
+	// thing and the graph said another, which is worse than either being wrong on
+	// its own because the screen looks correct.
+	//
+	// An unresolvable name clears the id rather than keeping the stale one: the
+	// deal is then honestly unlinked, which is what CreateDeal already does with
+	// a name that matches no account.
+	if v, ok := patch["account"].(string); ok {
+		accountID, err := r.resolveAccountID(ctx, v)
+		if err != nil {
+			return models.Deal{}, err
+		}
+		add("account_id", nullStr(accountID))
+	}
 	if len(sets) == 1 {
 		return r.GetDeal(ctx, id)
 	}

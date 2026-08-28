@@ -32,15 +32,21 @@ func TestIntegration_ScopeIsEnforcedInSQL(t *testing.T) {
 	}
 
 	repo := New(pool)
-	for _, o := range []struct{ id, name, owner string }{
-		{"ACC-R1", "Rep One Co", "rep@iag.com"},
-		{"ACC-R2", "Rep Two Co", "other@iag.com"},
-		{"ACC-R3", "Director Co", "director@iag.com"},
+	// Ids come from NewID rather than ACC-R1 literals: 0011 made crm_accounts.id
+	// a uuid, and the literals fail the insert outright ("invalid input syntax
+	// for type uuid"). Minting them the way the service does keeps this test
+	// independent of the id format entirely.
+	id := map[string]string{}
+	for _, o := range []struct{ key, name, owner string }{
+		{"rep", "Rep One Co", "rep@iag.com"},
+		{"other", "Rep Two Co", "other@iag.com"},
+		{"director", "Director Co", "director@iag.com"},
 	} {
+		id[o.key] = repo.NewID()
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO crm_accounts (id, name, account_type, country, segment, owner, value_display, status)
-			VALUES ($1,$2,'customer','UG','coffee',$3,'',$4)`, o.id, o.name, o.owner, "active"); err != nil {
-			t.Fatalf("seed %s: %v", o.id, err)
+			VALUES ($1,$2,'customer','UG','coffee',$3,'',$4)`, id[o.key], o.name, o.owner, "active"); err != nil {
+			t.Fatalf("seed %s: %v", o.name, err)
 		}
 	}
 
@@ -58,8 +64,8 @@ func TestIntegration_ScopeIsEnforcedInSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list scoped: %v", err)
 	}
-	if total != 1 || len(mine) != 1 || mine[0].ID != "ACC-R1" {
-		t.Fatalf("scoped rep saw %d rows (%+v), want only ACC-R1", len(mine), mine)
+	if total != 1 || len(mine) != 1 || mine[0].ID != id["rep"] {
+		t.Fatalf("scoped rep saw %d rows (%+v), want only their own account %s", len(mine), mine, id["rep"])
 	}
 
 	// THE BYPASS: rep supplies ?owner=director@iag.com. Must return nothing,

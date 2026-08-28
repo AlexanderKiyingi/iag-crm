@@ -92,9 +92,12 @@ func (r *Repository) CreateLead(ctx context.Context, in LeadInput) (models.Lead,
 	if in.Status == "" {
 		in.Status = "qualifying"
 	}
-	if in.Score == 0 {
-		in.Score = 65
-	}
+	// No default score. 65 was invented for a lead nobody had scored, and it is
+	// not inert: ListLeads orders on `score DESC, created_at DESC`, so every
+	// unscored lead outranked one a human had honestly scored below 65, and the
+	// list read as a ranking when nothing had been ranked. A caller that scores
+	// its leads still sends one; the rest read 0, which is true, and the ordering
+	// falls through to created_at DESC.
 	now := time.Now().UTC()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_leads (id, name, company, email, phone, source, segment, region, score, status, owner, notes, attrs, created_at, updated_at)

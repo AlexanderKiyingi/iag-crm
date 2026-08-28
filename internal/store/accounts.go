@@ -463,6 +463,18 @@ func (r *Repository) DeleteContact(ctx context.Context, id string) error {
 	return nil
 }
 
+// patchedAccountName reports the account name a sparse PATCH body sets, under
+// either of the two keys that reach the same column. `account_name` wins when a
+// caller sends both, matching the precedence the column allowlist uses.
+func patchedAccountName(patch map[string]any) (string, bool) {
+	for _, key := range []string{"account_name", "account"} {
+		if v, ok := patch[key].(string); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
 func (r *Repository) PatchContact(ctx context.Context, id string, patch map[string]any) (models.Contact, error) {
 	sets := []string{}
 	args := []any{id}
@@ -490,6 +502,17 @@ func (r *Repository) PatchContact(ctx context.Context, id string, patch map[stri
 	if attrs, ok := patchAttrs(patch); ok {
 		sets = append(sets, fmt.Sprintf("attrs = $%d", i))
 		args = append(args, encodeAttrs(attrs))
+		i++
+	}
+	// Re-point the foreign key alongside the display name — see PatchDeal for
+	// why the two drifting apart is the damaging case.
+	if name, ok := patchedAccountName(patch); ok {
+		accountID, err := r.resolveAccountID(ctx, name)
+		if err != nil {
+			return models.Contact{}, err
+		}
+		sets = append(sets, fmt.Sprintf("account_id = $%d", i))
+		args = append(args, nullStr(accountID))
 		i++
 	}
 	if len(sets) == 0 {
