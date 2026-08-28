@@ -81,11 +81,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if err := seed.EnsureJourneySteps(context.Background(), pool); err != nil {
-		slog.Error("journey steps", "err", err)
-		os.Exit(1)
-	}
-
 	if cfg.SeedOnEmpty {
 		if err := seed.Run(context.Background(), pool); err != nil {
 			slog.Error("seed", "err", err)

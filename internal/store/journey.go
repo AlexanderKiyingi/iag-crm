@@ -90,11 +90,13 @@ func (r *Repository) CreateJourneyStep(ctx context.Context, journeyID string, in
 }
 
 func (r *Repository) SeedJourneyStepsIfEmpty(ctx context.Context, journeyID string, steps []JourneyStep) error {
-	// On a freshly rebuilt DB the parent crm_journeys row may not exist yet:
-	// the boot-time backfill (EnsureJourneySteps in main.go) runs before
-	// seed.Run inserts the journeys. Seeding steps for a missing parent
-	// violates the journey_id FK (23503), so skip until the journey exists —
-	// seed.Run calls this again right after creating the journeys.
+	// journeyID must be a UUID: migration 0011_uuid_entity_ids retyped
+	// crm_journeys.id, so a coded id such as "JRN-001" fails to parse (22P02)
+	// on the existence check below rather than simply matching nothing.
+	//
+	// Seeding steps for a journey that does not exist would violate the
+	// journey_id FK (23503), so this returns without writing when the parent
+	// is absent.
 	var parentExists bool
 	if err := r.pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM crm_journeys WHERE id = $1)`, journeyID).Scan(&parentExists); err != nil {
