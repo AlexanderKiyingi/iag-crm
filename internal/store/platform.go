@@ -145,12 +145,30 @@ func (r *Repository) PatchActivity(ctx context.Context, id string, patch map[str
 	i := 2
 	for _, field := range []struct{ key, col string }{
 		{"subject", "subject"}, {"body", "body"}, {"type", "activity_type"}, {"owner", "owner"},
+		// status was not a column at all, so a follow-up could never be marked
+		// Done — it stayed Planned for ever no matter what the operator clicked.
+		{"status", "status"},
 	} {
 		if v, ok := patch[field.key]; ok {
 			sets = append(sets, fmt.Sprintf("%s = $%d", field.col, i))
 			args = append(args, v)
 			i++
 		}
+	}
+	for _, field := range []struct{ key, col string }{
+		// occurred_at was create-only; due_at did not exist.
+		{"occurred_at", "occurred_at"}, {"due_at", "due_at"},
+	} {
+		if v, ok := patch[field.key]; ok {
+			sets = append(sets, fmt.Sprintf("%s = $%d", field.col, i))
+			args = append(args, parsePatchTime(v))
+			i++
+		}
+	}
+	if attrs, ok := patchAttrs(patch); ok {
+		sets = append(sets, fmt.Sprintf("attrs = $%d", i))
+		args = append(args, encodeAttrs(attrs))
+		i++
 	}
 	if len(sets) == 0 {
 		return r.GetActivity(ctx, id)
@@ -180,7 +198,7 @@ func (r *Repository) DeleteActivity(ctx context.Context, id string) error {
 func (r *Repository) GetActivity(ctx context.Context, id string) (models.Activity, error) {
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id,
-		       outlet_ref, owner, occurred_at, created_at
+		       outlet_ref, owner, occurred_at, due_at, status, attrs, created_at
 		FROM crm_activities WHERE id = $1
 	`, id)
 	return scanActivity(row)

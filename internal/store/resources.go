@@ -162,10 +162,14 @@ func (r *Repository) PatchQuote(ctx context.Context, id string, patch map[string
 func scanActivity(row pgx.Row) (models.Activity, error) {
 	var a models.Activity
 	var accountID, contactID, dealID, outletRef *string
+	var dueAt *time.Time
+	var attrs []byte
 	err := row.Scan(
 		&a.ID, &a.Type, &a.Subject, &a.Body, &accountID, &a.Account, &contactID, &dealID,
-		&outletRef, &a.Owner, &a.OccurredAt, &a.CreatedAt,
+		&outletRef, &a.Owner, &a.OccurredAt, &dueAt, &a.Status, &attrs, &a.CreatedAt,
 	)
+	a.DueAt = dueAt
+	a.Attrs = decodeAttrs(attrs)
 	if err != nil {
 		return a, err
 	}
@@ -210,7 +214,7 @@ func (r *Repository) ListActivities(ctx context.Context, opts ListOpts) ([]model
 	}
 
 	rows, err := r.db(ctx).Query(ctx, `
-		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, created_at
+		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, due_at, status, attrs, created_at
 		FROM crm_activities`+where+`
 		ORDER BY occurred_at DESC LIMIT $1 OFFSET $2
 	`, args...)
@@ -240,6 +244,14 @@ type ActivityInput struct {
 	OutletRef  string    `json:"outlet_ref"`
 	Owner      string    `json:"owner"`
 	OccurredAt time.Time `json:"occurred_at"`
+	// DueAt and Status make a follow-up a follow-up: an activity with neither
+	// cannot be chased or closed. Promoted columns rather than attrs, because
+	// the engagement views order and filter on them.
+	DueAt  *time.Time `json:"due_at"`
+	Status string     `json:"status"`
+	// Attrs carries client fields with no promoted column (reference, the
+	// free-text "related to"). See db/migrations/0008_entity_attrs.sql.
+	Attrs map[string]any `json:"attrs"`
 }
 
 func (r *Repository) CreateActivity(ctx context.Context, in ActivityInput) (models.Activity, error) {
@@ -256,14 +268,15 @@ func (r *Repository) CreateActivity(ctx context.Context, in ActivityInput) (mode
 		accountID = resolved
 	}
 	_, err := r.db(ctx).Exec(ctx, `
-		INSERT INTO crm_activities (id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
-	`, id, in.Type, in.Subject, in.Body, nullStr(accountID), in.Account, nullStr(in.ContactID), nullStr(in.DealID), nullStr(in.OutletRef), in.Owner, in.OccurredAt)
+		INSERT INTO crm_activities (id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, due_at, status, attrs, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+	`, id, in.Type, in.Subject, in.Body, nullStr(accountID), in.Account, nullStr(in.ContactID), nullStr(in.DealID), nullStr(in.OutletRef), in.Owner, in.OccurredAt,
+		in.DueAt, in.Status, encodeAttrs(in.Attrs))
 	if err != nil {
 		return models.Activity{}, err
 	}
 	row := r.db(ctx).QueryRow(ctx, `
-		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, created_at
+		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, due_at, status, attrs, created_at
 		FROM crm_activities WHERE id = $1
 	`, id)
 	return scanActivity(row)
@@ -277,15 +290,18 @@ func scanTicket(row pgx.Row) (models.Ticket, error) {
 	// row had no outlet or no DMS claim — the same defect already fixed for
 	// activities, which shares this file.
 	var outletRef, dmsClaimRef *string
-	var sla *time.Time
+	var sla, resolvedAt *time.Time
+	var attrs []byte
 	err := row.Scan(
 		&t.ID, &accountID, &t.Account, &contactID, &outletRef, &dealID, &t.Subject, &t.Type,
 		&t.Priority, &t.Channel, &t.Status, &t.Owner, &t.Description, &dmsClaimRef, &sla,
-		&t.CreatedAt, &t.UpdatedAt,
+		&resolvedAt, &t.Resolution, &attrs, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		return t, err
 	}
+	t.ResolvedAt = resolvedAt
+	t.Attrs = decodeAttrs(attrs)
 	if outletRef != nil {
 		t.OutletRef = *outletRef
 	}
@@ -324,7 +340,7 @@ func (r *Repository) ListTickets(ctx context.Context, opts ListOpts) ([]models.T
 	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
-		       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
+		       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE `+whereSQL+` ORDER BY created_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
 		return nil, 0, err
@@ -354,6 +370,13 @@ type TicketInput struct {
 	Owner       string `json:"owner"`
 	Description string `json:"description"`
 	Status      string `json:"status"`
+	// A complaint closed with no recorded outcome is the standard support audit
+	// finding, so the resolution and when it happened are promoted columns.
+	ResolvedAt *time.Time `json:"resolved_at"`
+	Resolution string     `json:"resolution"`
+	// Attrs carries client fields with no promoted column (reference, the
+	// related order/invoice). See db/migrations/0008_entity_attrs.sql.
+	Attrs map[string]any `json:"attrs"`
 }
 
 func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.Ticket, error) {
@@ -377,16 +400,17 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 	now := time.Now().UTC()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_tickets (id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type,
-			priority, channel, status, owner, description, sla_due_at, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)
+			priority, channel, status, owner, description, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)
 	`, id, nullStr(accountID), in.Account, nullStr(in.ContactID), nullStr(in.OutletRef), nullStr(in.DealID),
-		in.Subject, in.Type, in.Priority, in.Channel, status, in.Owner, in.Description, sla, now)
+		in.Subject, in.Type, in.Priority, in.Channel, status, in.Owner, in.Description, sla,
+		in.ResolvedAt, in.Resolution, encodeAttrs(in.Attrs), now)
 	if err != nil {
 		return models.Ticket{}, err
 	}
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
-		       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
+		       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
 	`, id)
 	return scanTicket(row)
@@ -395,7 +419,7 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 func (r *Repository) GetTicket(ctx context.Context, id string) (models.Ticket, error) {
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
-		       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
+		       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
 	`, id)
 	return scanTicket(row)
@@ -413,15 +437,27 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 	for k, col := range map[string]string{
 		"subject": "subject", "type": "ticket_type", "priority": "priority",
 		"channel": "channel", "status": "status", "owner": "owner", "description": "description",
+		// The outcome of a complaint was unwritable: an agent could close a
+		// ticket but never record how.
+		"resolution": "resolution",
 	} {
 		if v, ok := patch[k].(string); ok {
 			add(col, v)
 		}
 	}
+	if v, ok := patch["resolved_at"]; ok {
+		add("resolved_at", parsePatchTime(v))
+	}
+	if v, ok := patch["sla_due_at"]; ok {
+		add("sla_due_at", parsePatchTime(v))
+	}
+	if attrs, ok := patchAttrs(patch); ok {
+		add("attrs", encodeAttrs(attrs))
+	}
 	if len(sets) == 1 {
 		row := r.db(ctx).QueryRow(ctx, `
 			SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
-			       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
+			       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 			FROM crm_tickets WHERE id = $1
 		`, id)
 		return scanTicket(row)
@@ -433,7 +469,7 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 	}
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
-		       status, owner, description, dms_claim_ref, sla_due_at, created_at, updated_at
+		       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
 	`, id)
 	return scanTicket(row)
