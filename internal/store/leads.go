@@ -11,15 +11,39 @@ import (
 	"github.com/iag/crm/backend/internal/models"
 )
 
+// leadColumns is the single source of truth for the lead read shape. It was
+// repeated verbatim in three queries; 0012 adding five columns to two of them
+// and not the third is exactly the drift this prevents.
+const leadColumns = `id, name, company, email, phone, source, segment, region, score, status, owner, notes,
+	       account_id, account_name, next_follow_up_at, estimated_value, currency, attrs, created_at, updated_at`
+
 func scanLead(row pgx.Row) (models.Lead, error) {
 	var l models.Lead
 	var attrs []byte
+	// account_id is nullable (a lead whose customer matches no account) and
+	// estimated_value / next_follow_up_at are unset until someone fills them in.
+	// Scanning any of them into a plain value fails the WHOLE query, not just
+	// the row — the defect that took GET /tickets, /campaigns and /accounts down
+	// on this service already.
+	var accountID *string
+	var nextFollowUp *time.Time
+	var estimatedValue *float64
 	err := row.Scan(
 		&l.ID, &l.Name, &l.Company, &l.Email, &l.Phone, &l.Source, &l.Segment,
-		&l.Region, &l.Score, &l.Status, &l.Owner, &l.Notes, &attrs, &l.CreatedAt, &l.UpdatedAt,
+		&l.Region, &l.Score, &l.Status, &l.Owner, &l.Notes,
+		&accountID, &l.Account, &nextFollowUp, &estimatedValue, &l.Currency,
+		&attrs, &l.CreatedAt, &l.UpdatedAt,
 	)
+	if err != nil {
+		return l, err
+	}
+	if accountID != nil {
+		l.AccountID = *accountID
+	}
+	l.NextFollowUpAt = nextFollowUp
+	l.EstimatedValue = estimatedValue
 	l.Attrs = decodeAttrs(attrs)
-	return l, err
+	return l, nil
 }
 
 func (r *Repository) ListLeads(ctx context.Context, opts ListOpts) ([]models.Lead, int, error) {
@@ -45,7 +69,7 @@ func (r *Repository) ListLeads(ctx context.Context, opts ListOpts) ([]models.Lea
 	}
 	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `
-		SELECT id, name, company, email, phone, source, segment, region, score, status, owner, notes, attrs, created_at, updated_at
+		SELECT `+leadColumns+`
 		FROM crm_leads WHERE `+whereSQL+` ORDER BY score DESC, created_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
 		return nil, 0, err
@@ -64,7 +88,7 @@ func (r *Repository) ListLeads(ctx context.Context, opts ListOpts) ([]models.Lea
 
 func (r *Repository) GetLead(ctx context.Context, id string) (models.Lead, error) {
 	row := r.db(ctx).QueryRow(ctx, `
-		SELECT id, name, company, email, phone, source, segment, region, score, status, owner, notes, attrs, created_at, updated_at
+		SELECT `+leadColumns+`
 		FROM crm_leads WHERE id = $1
 	`, id)
 	return scanLead(row)
@@ -82,8 +106,18 @@ type LeadInput struct {
 	Notes   string `json:"notes"`
 	Score   int    `json:"score"`
 	Status  string `json:"status"`
-	// Attrs carries client fields with no promoted column (pipeline stage,
-	// estimated value, next follow-up …). See db/migrations/0008_entity_attrs.sql.
+	// Account is the free-text customer name; AccountID wins when both are sent.
+	// A name matching no account is not an error — the lead is simply unlinked,
+	// which is what CreateDeal and CreateContact already do.
+	Account   string `json:"account"`
+	AccountID string `json:"account_id"`
+	// Promoted out of attrs by 0012. Pointers so "not supplied" stays distinct
+	// from "explicitly zero" — an estimated value of 0 is a real answer.
+	NextFollowUpAt *time.Time `json:"next_follow_up_at"`
+	EstimatedValue *float64   `json:"estimated_value"`
+	Currency       string     `json:"currency"`
+	// Attrs carries client fields with no promoted column. See
+	// db/migrations/0008_entity_attrs.sql.
 	Attrs map[string]any `json:"attrs"`
 }
 
@@ -98,11 +132,21 @@ func (r *Repository) CreateLead(ctx context.Context, in LeadInput) (models.Lead,
 	// list read as a ranking when nothing had been ranked. A caller that scores
 	// its leads still sends one; the rest read 0, which is true, and the ordering
 	// falls through to created_at DESC.
+	accountID := in.AccountID
+	if accountID == "" && in.Account != "" {
+		resolved, err := r.resolveAccountID(ctx, in.Account)
+		if err != nil {
+			return models.Lead{}, err
+		}
+		accountID = resolved
+	}
 	now := time.Now().UTC()
 	_, err := r.db(ctx).Exec(ctx, `
-		INSERT INTO crm_leads (id, name, company, email, phone, source, segment, region, score, status, owner, notes, attrs, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
-	`, id, in.Name, in.Company, in.Email, in.Phone, in.Source, in.Segment, in.Region, in.Score, in.Status, in.Owner, in.Notes, encodeAttrs(in.Attrs), now)
+		INSERT INTO crm_leads (id, name, company, email, phone, source, segment, region, score, status, owner, notes,
+			account_id, account_name, next_follow_up_at, estimated_value, currency, attrs, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19)
+	`, id, in.Name, in.Company, in.Email, in.Phone, in.Source, in.Segment, in.Region, in.Score, in.Status, in.Owner, in.Notes,
+		nullStr(accountID), in.Account, in.NextFollowUpAt, in.EstimatedValue, in.Currency, encodeAttrs(in.Attrs), now)
 	if err != nil {
 		return models.Lead{}, err
 	}
@@ -121,6 +165,7 @@ func (r *Repository) PatchLead(ctx context.Context, id string, patch map[string]
 	for k, col := range map[string]string{
 		"name": "name", "company": "company", "email": "email", "phone": "phone",
 		"source": "source", "segment": "segment", "region": "region", "status": "status", "owner": "owner", "notes": "notes",
+		"account": "account_name", "currency": "currency",
 	} {
 		if v, ok := patch[k].(string); ok {
 			add(col, v)
@@ -129,8 +174,26 @@ func (r *Repository) PatchLead(ctx context.Context, id string, patch map[string]
 	if v, ok := patch["score"].(float64); ok {
 		add("score", int(v))
 	}
+	if v, ok := patch["next_follow_up_at"]; ok {
+		add("next_follow_up_at", parsePatchTime(v))
+	}
+	if v, ok := patch["estimated_value"]; ok {
+		add("estimated_value", parsePatchNumber(v))
+	}
 	if attrs, ok := patchAttrs(patch); ok {
 		add("attrs", encodeAttrs(attrs))
+	}
+	// Re-point the foreign key when the customer name changes. Writing
+	// account_name alone leaves account_id on the previous account, so the screen
+	// shows one company and every join — /accounts/:id/360, the rollups — still
+	// reports the other. That exact split was fixed on deals and contacts; leads
+	// gain the link and the fix together.
+	if v, ok := patch["account"].(string); ok {
+		accountID, err := r.resolveAccountID(ctx, v)
+		if err != nil {
+			return models.Lead{}, err
+		}
+		add("account_id", nullStr(accountID))
 	}
 	if len(sets) == 1 {
 		return r.GetLead(ctx, id)

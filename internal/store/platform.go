@@ -170,6 +170,23 @@ func (r *Repository) PatchActivity(ctx context.Context, id string, patch map[str
 		args = append(args, encodeAttrs(attrs))
 		i++
 	}
+	// The customer an activity is about was not patchable at all: CreateActivity
+	// resolves `account` to a name and an id, and PatchActivity carried neither,
+	// so re-pointing a follow-up at a different customer returned 200 and changed
+	// nothing. Both move together, for the reason PatchDeal spells out — a name
+	// and an account_id that disagree read as correct and join as wrong.
+	if v, ok := patch["account"].(string); ok {
+		accountID, err := r.resolveAccountID(ctx, v)
+		if err != nil {
+			return models.Activity{}, err
+		}
+		sets = append(sets, fmt.Sprintf("account_name = $%d", i))
+		args = append(args, v)
+		i++
+		sets = append(sets, fmt.Sprintf("account_id = $%d", i))
+		args = append(args, nullStr(accountID))
+		i++
+	}
 	if len(sets) == 0 {
 		return r.GetActivity(ctx, id)
 	}

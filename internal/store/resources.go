@@ -290,16 +290,17 @@ func scanTicket(row pgx.Row) (models.Ticket, error) {
 	// row had no outlet or no DMS claim — the same defect already fixed for
 	// activities, which shares this file.
 	var outletRef, dmsClaimRef *string
-	var sla, resolvedAt *time.Time
+	var occurredAt, sla, resolvedAt *time.Time
 	var attrs []byte
 	err := row.Scan(
 		&t.ID, &accountID, &t.Account, &contactID, &outletRef, &dealID, &t.Subject, &t.Type,
-		&t.Priority, &t.Channel, &t.Status, &t.Owner, &t.Description, &dmsClaimRef, &sla,
+		&t.Priority, &t.Channel, &t.Status, &t.Owner, &t.Description, &dmsClaimRef, &occurredAt, &sla,
 		&resolvedAt, &t.Resolution, &attrs, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		return t, err
 	}
+	t.OccurredAt = occurredAt
 	t.ResolvedAt = resolvedAt
 	t.Attrs = decodeAttrs(attrs)
 	if outletRef != nil {
@@ -340,7 +341,7 @@ func (r *Repository) ListTickets(ctx context.Context, opts ListOpts) ([]models.T
 	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
-		       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
+		       status, owner, description, dms_claim_ref, occurred_at, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE `+whereSQL+` ORDER BY created_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
 		return nil, 0, err
@@ -370,6 +371,10 @@ type TicketInput struct {
 	Owner       string `json:"owner"`
 	Description string `json:"description"`
 	Status      string `json:"status"`
+	// OccurredAt is when the incident happened. Absent, CreateTicket falls back
+	// to now — which is what every row got before 0012, and why a complaint could
+	// not be logged for the day it actually happened.
+	OccurredAt *time.Time `json:"occurred_at"`
 	// A complaint closed with no recorded outcome is the standard support audit
 	// finding, so the resolution and when it happened are promoted columns.
 	ResolvedAt *time.Time `json:"resolved_at"`
@@ -398,19 +403,23 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 	}
 	sla := time.Now().UTC().Add(24 * time.Hour)
 	now := time.Now().UTC()
+	occurredAt := in.OccurredAt
+	if occurredAt == nil {
+		occurredAt = &now
+	}
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_tickets (id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type,
-			priority, channel, status, owner, description, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)
+			priority, channel, status, owner, description, occurred_at, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19)
 	`, id, nullStr(accountID), in.Account, nullStr(in.ContactID), nullStr(in.OutletRef), nullStr(in.DealID),
-		in.Subject, in.Type, in.Priority, in.Channel, status, in.Owner, in.Description, sla,
+		in.Subject, in.Type, in.Priority, in.Channel, status, in.Owner, in.Description, occurredAt, sla,
 		in.ResolvedAt, in.Resolution, encodeAttrs(in.Attrs), now)
 	if err != nil {
 		return models.Ticket{}, err
 	}
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
-		       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
+		       status, owner, description, dms_claim_ref, occurred_at, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
 	`, id)
 	return scanTicket(row)
@@ -419,7 +428,7 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 func (r *Repository) GetTicket(ctx context.Context, id string) (models.Ticket, error) {
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
-		       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
+		       status, owner, description, dms_claim_ref, occurred_at, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
 	`, id)
 	return scanTicket(row)
@@ -440,16 +449,33 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 		// The outcome of a complaint was unwritable: an agent could close a
 		// ticket but never record how.
 		"resolution": "resolution",
+		// account was missing entirely, so a complaint filed against the wrong
+		// customer could never be moved to the right one — the field is required
+		// on the client form and the edit was a silent no-op returning 200.
+		"account": "account_name",
 	} {
 		if v, ok := patch[k].(string); ok {
 			add(col, v)
 		}
+	}
+	if v, ok := patch["occurred_at"]; ok {
+		add("occurred_at", parsePatchTime(v))
 	}
 	if v, ok := patch["resolved_at"]; ok {
 		add("resolved_at", parsePatchTime(v))
 	}
 	if v, ok := patch["sla_due_at"]; ok {
 		add("sla_due_at", parsePatchTime(v))
+	}
+	// Keep the foreign key with the name, for the reason PatchDeal spells out:
+	// a display name and an account_id that disagree look correct on screen and
+	// are wrong in every join.
+	if v, ok := patch["account"].(string); ok {
+		accountID, err := r.resolveAccountID(ctx, v)
+		if err != nil {
+			return models.Ticket{}, err
+		}
+		add("account_id", nullStr(accountID))
 	}
 	if attrs, ok := patchAttrs(patch); ok {
 		add("attrs", encodeAttrs(attrs))
@@ -469,7 +495,7 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 	}
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
-		       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
+		       status, owner, description, dms_claim_ref, occurred_at, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
 	`, id)
 	return scanTicket(row)

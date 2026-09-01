@@ -213,6 +213,31 @@ func (r *Repository) PatchDeal(ctx context.Context, id string, patch map[string]
 	if attrs, ok := patchAttrs(patch); ok {
 		add("attrs", encodeAttrs(attrs))
 	}
+	// Stamp the close date when a plain PATCH moves the deal to won or lost.
+	//
+	// won_at / lost_at used to be written only by SetDealStage, and the clients
+	// do not use it: a PATCH carrying {"stage":"won"} already books the finance
+	// AR reference through finalizeDealWon, so nothing pushed anyone toward the
+	// dedicated verb. The column was left NULL, and PipelineSummary computes
+	// velocity as AVG(COALESCE(won_at, NOW()) - created_at) — so a deal closed
+	// this way kept ageing for ever and dragged the reported sales cycle up with
+	// it, silently and permanently.
+	//
+	// Set on the way in and cleared on the way out, so a deal reopened from won
+	// back to negotiation does not keep a close date for a close that no longer
+	// happened. COALESCE keeps the original timestamp on a re-save that leaves
+	// the deal won: the date a deal closed does not change because someone
+	// corrected its description afterwards.
+	if v, ok := patch["stage"].(string); ok {
+		switch v {
+		case models.DealStageWon:
+			sets = append(sets, "won_at = COALESCE(won_at, NOW())", "lost_at = NULL")
+		case models.DealStageLost:
+			sets = append(sets, "lost_at = COALESCE(lost_at, NOW())", "won_at = NULL")
+		default:
+			sets = append(sets, "won_at = NULL", "lost_at = NULL")
+		}
+	}
 	// Re-point the foreign key when the account changes. `account` writes
 	// account_name only, so moving a deal to another customer left account_id on
 	// the previous account — and account_id is what /accounts/:id/360, the

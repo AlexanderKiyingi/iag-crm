@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strconv"
 	"time"
 )
 
@@ -75,4 +76,34 @@ func parsePatchTime(v any) any {
 		}
 	}
 	return nil
+}
+
+// parsePatchNumber coerces a JSON value from a sparse PATCH body into a
+// nullable numeric column.
+//
+// Null and the empty string clear the column — the same retraction rule
+// parsePatchTime follows, and the only way an operator can undo a figure they
+// entered by mistake. A string is accepted as well as a number because the
+// record clients send every field as a string; refusing one would mean a value
+// the operator can see in the form and cannot save.
+func parsePatchNumber(v any) any {
+	switch n := v.(type) {
+	case nil:
+		return nil
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case string:
+		if n == "" {
+			return nil
+		}
+		f, err := strconv.ParseFloat(n, 64)
+		if err != nil {
+			return nil
+		}
+		return f
+	default:
+		return nil
+	}
 }

@@ -82,6 +82,18 @@ type Lead struct {
 	Status  string `json:"status"`
 	Owner   string `json:"owner"`
 	Notes   string `json:"notes,omitempty"`
+	// AccountID / Account link a lead to the company it belongs to, resolved from
+	// a free-text name on write exactly as deals, contacts, activities and
+	// tickets already are. Leads were the one entity with no link at all, so a
+	// lead never appeared on the 360 of the account it was about.
+	AccountID string `json:"account_id,omitempty"`
+	Account   string `json:"account,omitempty"`
+	// Promoted out of attrs by 0012: "which leads are worth chasing this week" is
+	// the question a lead list exists to answer, and neither value was reachable
+	// from a query while it lived in JSONB.
+	NextFollowUpAt *time.Time `json:"next_follow_up_at,omitempty"`
+	EstimatedValue *float64   `json:"estimated_value,omitempty"`
+	Currency       string     `json:"currency,omitempty"`
 	// Attrs is free-form overflow for client fields this service has no promoted
 	// column for. See db/migrations/0008_entity_attrs.sql.
 	Attrs     map[string]any `json:"attrs,omitempty"`
@@ -179,7 +191,11 @@ type Ticket struct {
 	Owner       string     `json:"owner"`
 	Description string     `json:"description,omitempty"`
 	DmsClaimRef string     `json:"dms_claim_ref,omitempty"`
-	SlaDueAt    *time.Time `json:"sla_due_at,omitempty"`
+	// OccurredAt is when the incident happened, which is not when the row was
+	// written: a complaint logged on Monday about Friday's delivery was being
+	// recorded as Monday's. created_at is the audit trail, this is the fact.
+	OccurredAt *time.Time `json:"occurred_at,omitempty"`
+	SlaDueAt   *time.Time `json:"sla_due_at,omitempty"`
 	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
 	Resolution  string     `json:"resolution,omitempty"`
 	// Attrs is free-form overflow for client fields this service has no promoted
