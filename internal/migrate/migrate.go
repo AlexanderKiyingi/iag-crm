@@ -26,9 +26,27 @@ CREATE TABLE IF NOT EXISTS crm.schema_migrations (
 )`
 
 type Migration struct {
-	Version  string
-	Body     string
-	Checksum string
+	Version string
+	Body    string
+	// Checksum is the sha256 of the file as shipped, and the value stamped into
+	// the ledger. EOLChecksum is the sha256 of the same file with the opposite
+	// line endings; see matches.
+	Checksum    string
+	EOLChecksum string
+}
+
+// matches reports whether a stored ledger checksum describes this file.
+//
+// It accepts the file hashed with either line ending. A ledger row written from
+// a Windows checkout — before .gitattributes pinned *.sql to eol=lf — recorded
+// the sha256 of a CRLF file, while the Linux container hashes LF and sees every
+// single migration as edited. That is a false mismatch: the SQL is identical,
+// and treating it as real drove every recorded migration through the re-apply
+// path on every boot. (The same trap cost fleet eleven migrations.) A body that
+// differs only in line endings is re-stamped with the canonical checksum and not
+// re-run.
+func (m Migration) matches(stored string) bool {
+	return stored == m.Checksum || stored == m.EOLChecksum
 }
 
 func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
@@ -86,6 +104,14 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 			}
 			newlyApplied = append(newlyApplied, m.Version)
 			slog.Info("migration applied", "version", m.Version)
+		case !forceReapply && prev.Checksum != m.Checksum && m.matches(prev.Checksum):
+			// Line endings only. Nothing to run; adopt the canonical checksum so
+			// this stops being reported on every boot.
+			if err := restamp(ctx, pool, m); err != nil {
+				return newlyApplied, fmt.Errorf("migration %s re-stamp: %w", m.Version, err)
+			}
+			slog.Info("migration checksum differed only in line endings; re-stamped",
+				"version", m.Version)
 		case forceReapply || prev.Checksum != m.Checksum:
 			// Legacy Railway DBs carry schema_migrations rows written by an
 			// earlier migration tool whose body for this version differs from
@@ -99,14 +125,32 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 			// safe self-heal is to re-run the body and then re-stamp the
 			// checksum in the same transaction. Mirrors the self-heal pattern
 			// used by the other services (iag-authentication 839c292).
-			slog.Warn("migration checksum mismatch; re-applying idempotent body and re-stamping",
-				"version", m.Version,
-				"stored", prev.Checksum,
-				"file", m.Checksum,
-			)
+			//
+			// That contract is load-bearing: a body that cannot survive a second
+			// run takes the whole service down rather than healing it. The
+			// re-apply and the re-stamp share one transaction, so a body that
+			// throws leaves the old checksum in place, mismatches again on the
+			// next boot, and crash-loops for ever. 0011_uuid_entity_ids did
+			// exactly that until it was made state-driven — add nothing here
+			// that is not safe to run twice.
+			//
+			// The reason is logged separately: a forced re-apply is the missing
+			// base table, not an edited file, and reporting it as a checksum
+			// mismatch sends the reader after the wrong problem.
+			if forceReapply {
+				slog.Warn("re-applying idempotent body to rebuild missing schema",
+					"version", m.Version)
+			} else {
+				slog.Warn("migration checksum mismatch; re-applying idempotent body and re-stamping",
+					"version", m.Version,
+					"stored", prev.Checksum,
+					"file", m.Checksum,
+				)
+			}
 			if err := reapply(ctx, pool, m); err != nil {
 				return newlyApplied, fmt.Errorf(
-					"migration %s re-apply: %w", m.Version, err,
+					"migration %s re-apply (stored checksum %s, file %s; the body must be "+
+						"safe to run twice): %w", m.Version, prev.Checksum, m.Checksum, err,
 				)
 			}
 		}
@@ -194,10 +238,19 @@ func load(fsys fs.FS) ([]Migration, error) {
 			return nil, fmt.Errorf("read %s: %w", name, err)
 		}
 		sum := sha256.Sum256(body)
+		// The same bytes with the other line ending, so a ledger stamped from a
+		// Windows checkout still recognises its own file. See Migration.matches.
+		lf := strings.ReplaceAll(string(body), "\r\n", "\n")
+		other := lf
+		if string(body) == lf {
+			other = strings.ReplaceAll(lf, "\n", "\r\n")
+		}
+		otherSum := sha256.Sum256([]byte(other))
 		out = append(out, Migration{
-			Version:  strings.TrimSuffix(name, ".sql"),
-			Body:     string(body),
-			Checksum: hex.EncodeToString(sum[:]),
+			Version:     strings.TrimSuffix(name, ".sql"),
+			Body:        string(body),
+			Checksum:    hex.EncodeToString(sum[:]),
+			EOLChecksum: hex.EncodeToString(otherSum[:]),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
@@ -245,6 +298,16 @@ func apply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// restamp adopts the canonical checksum for a migration whose recorded body is
+// the same SQL, differing only in line endings. The body is not re-run: there is
+// nothing to change, and re-running is the expensive, riskier half.
+func restamp(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
+	_, err := pool.Exec(ctx,
+		`UPDATE crm.schema_migrations SET checksum = $1 WHERE version = $2`,
+		m.Checksum, m.Version)
+	return err
 }
 
 // reapply re-runs an already-recorded migration whose stored checksum no longer

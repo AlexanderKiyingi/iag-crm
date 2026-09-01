@@ -53,8 +53,27 @@ ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS estimated_value   NUMERIC(18,2);
 ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS currency          TEXT NOT NULL DEFAULT '';
 
 -- ── 3. a lead belongs to an account, like everything else here ────────────
-ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS account_id   UUID REFERENCES crm_accounts(id) ON DELETE SET NULL;
+ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS account_id   UUID;
 ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT '';
+
+-- The foreign key is declared separately rather than inline on the column. When
+-- the runner replays this file — after a rebuild of crm_accounts, say, which
+-- takes every constraint referencing it down with it — ADD COLUMN IF NOT EXISTS
+-- sees the column already there and skips, and an inline REFERENCES would be
+-- skipped with it, leaving the link silently unenforced.
+DO $fk$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conrelid = to_regclass('crm_leads')
+           AND conname  = 'crm_leads_account_id_fkey'
+    ) THEN
+        ALTER TABLE crm_leads
+            ADD CONSTRAINT crm_leads_account_id_fkey
+            FOREIGN KEY (account_id) REFERENCES crm_accounts(id) ON DELETE SET NULL;
+    END IF;
+END
+$fk$;
 
 CREATE INDEX IF NOT EXISTS crm_leads_account_id_idx
     ON crm_leads (account_id)

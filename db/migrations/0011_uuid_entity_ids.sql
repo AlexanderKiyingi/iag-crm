@@ -35,6 +35,18 @@
 -- plain columns, and are converted with the same mapping as the ids they point
 -- at or they would silently dangle.
 
+-- RE-RUNNING THIS MIGRATION
+--
+-- The runner re-executes a recorded migration whenever the ledger's checksum no
+-- longer matches the file — a self-heal that assumes every body is idempotent.
+-- The first cut of this one was not: it fed an already-uuid column to
+-- crm_id_to_uuid(TEXT) and matched a text regex against it, so a re-run died
+-- with "function crm_id_to_uuid(uuid) does not exist" before it reached its
+-- first ALTER. The re-apply transaction rolled back, the checksum was never
+-- re-stamped, and the service crash-looped on every boot with the same mismatch
+-- warning. The conversion is therefore state-driven: it looks at the column
+-- types it is about to change and does nothing where the work is already done.
+
 -- A table rewrite takes ACCESS EXCLUSIVE. Without a timeout, an ALTER that
 -- cannot get the lock immediately waits in the lock queue — and every read that
 -- arrives behind it queues too, so a migration run against live traffic stalls
@@ -54,20 +66,11 @@ CREATE OR REPLACE FUNCTION crm_id_to_uuid(v TEXT) RETURNS UUID AS $fn$
     END
 $fn$ LANGUAGE sql IMMUTABLE;
 
--- ---- keep the coded ids resolvable ----------------------------------------
--- The coded id is not retained as a key, but throwing it away entirely would
--- strand every bookmark, printed document and downstream record that quotes
--- ACC-500 or DEAL-500. Each one is recorded in crm_external_refs against the
--- uuid it became, so a lookup by the old code can still find the row.
---
--- Only genuinely coded ids are recorded; anything already stored as a uuid maps
--- to itself and is not worth a row. source_service is 'crm-legacy-code' so these
--- are distinguishable from refs pointing at other systems.
-DO $legacy$
+DO $convert$
 DECLARE
-    t TEXT;
-BEGIN
-    FOREACH t IN ARRAY ARRAY[
+    -- Every table whose surrogate id becomes uuid. The same list drives the
+    -- external-ref capture, the type change and the new column default.
+    coded_tables TEXT[] := ARRAY[
         'crm_accounts','crm_activities','crm_audit_entries','crm_bridge_field_mappings',
         'crm_bridge_pending_imports','crm_bridge_streams','crm_bridge_sync_log',
         'crm_budget_plans','crm_buying_signals','crm_campaigns','crm_contacts',
@@ -76,163 +79,177 @@ BEGIN
         'crm_journey_steps','crm_journeys','crm_leads','crm_loyalty_outlets',
         'crm_loyalty_promotions','crm_loyalty_tiers','crm_module_records','crm_mqls',
         'crm_outlets','crm_personas','crm_quotes','crm_segments','crm_seo_audit_jobs',
-        'crm_seo_keywords','crm_social_posts','crm_tickets']
+        'crm_seo_keywords','crm_social_posts','crm_tickets'];
+    t   TEXT;
+    fk  RECORD;
+    ref RECORD;
+BEGIN
+    -- Already converted? Then there is nothing here to do. Resolved with
+    -- to_regclass so the check follows the same search_path as the ALTERs below:
+    -- a legacy database still carrying these tables in `public` is found, and a
+    -- table this database has never had is skipped rather than erroring.
+    IF NOT EXISTS (
+        SELECT 1
+          FROM unnest(coded_tables) AS ct(name)
+          JOIN pg_attribute a ON a.attrelid = to_regclass(ct.name)
+         WHERE a.attname = 'id'
+           AND a.attnum > 0
+           AND NOT a.attisdropped
+           AND a.atttypid <> 'uuid'::regtype
+    ) THEN
+        RAISE NOTICE 'crm entity ids are already uuid; nothing to convert';
+        RETURN;
+    END IF;
+
+    -- ---- keep the coded ids resolvable ------------------------------------
+    -- The coded id is not retained as a key, but throwing it away entirely would
+    -- strand every bookmark, printed document and downstream record that quotes
+    -- ACC-500 or DEAL-500. Each one is recorded in crm_external_refs against the
+    -- uuid it became, so a lookup by the old code can still find the row.
+    --
+    -- Only genuinely coded ids are recorded; anything already stored as a uuid
+    -- maps to itself and is not worth a row. source_service is 'crm-legacy-code'
+    -- so these are distinguishable from refs pointing at other systems.
+    FOREACH t IN ARRAY coded_tables
     LOOP
+        CONTINUE WHEN to_regclass(t) IS NULL;
         EXECUTE format($q$
             INSERT INTO crm_external_refs
                 (source_service, source_type, source_id, target_type, target_id, origin)
-            SELECT 'crm-legacy-code', %L, id, %L, crm_id_to_uuid(id)::text, 'platform'
+            SELECT 'crm-legacy-code', %L, id::text, %L, crm_id_to_uuid(id::text)::text, 'platform'
               FROM %I
-             WHERE id !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+             WHERE id::text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
             ON CONFLICT (source_service, source_type, source_id) DO NOTHING
         $q$, t, t, t);
     END LOOP;
+
+    -- ---- drop the foreign keys --------------------------------------------
+    -- Dropped by name with IF EXISTS: on a re-run they were already restored at
+    -- the end of the previous pass, and on a database that never carried one the
+    -- drop must not be the thing that fails.
+    FOR fk IN
+        SELECT * FROM (VALUES
+            ('crm_activities',          'crm_activities_account_id_fkey'),
+            ('crm_activities',          'crm_activities_contact_id_fkey'),
+            ('crm_activities',          'crm_activities_deal_id_fkey'),
+            ('crm_buying_signals',      'crm_buying_signals_account_id_fkey'),
+            ('crm_contacts',            'crm_contacts_account_id_fkey'),
+            ('crm_deals',               'crm_deals_account_id_fkey'),
+            ('crm_journey_enrollments', 'crm_journey_enrollments_journey_id_fkey'),
+            ('crm_journey_step_logs',   'crm_journey_step_logs_enrollment_id_fkey'),
+            ('crm_journey_steps',       'crm_journey_steps_journey_id_fkey'),
+            ('crm_loyalty_outlets',     'crm_loyalty_outlets_account_id_fkey'),
+            ('crm_outlets',             'crm_outlets_account_id_fkey'),
+            ('crm_quotes',              'crm_quotes_account_id_fkey'),
+            ('crm_quotes',              'crm_quotes_deal_id_fkey'),
+            ('crm_tickets',             'crm_tickets_account_id_fkey'),
+            ('crm_tickets',             'crm_tickets_contact_id_fkey'),
+            ('crm_tickets',             'crm_tickets_deal_id_fkey')
+        ) AS v(tbl, name)
+    LOOP
+        CONTINUE WHEN to_regclass(fk.tbl) IS NULL;
+        EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I', fk.tbl, fk.name);
+    END LOOP;
+
+    -- ---- primary keys ------------------------------------------------------
+    FOREACH t IN ARRAY coded_tables
+    LOOP
+        CONTINUE WHEN to_regclass(t) IS NULL;
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id::text)', t);
+    END LOOP;
+
+    -- ---- referencing columns ----------------------------------------------
+    -- Only 16 of these relationships carry a foreign key. The rest — campaign_id,
+    -- segment_id, tier_id, lead_id, step_id, converted_deal_id, stream_id — are
+    -- plain columns, and are converted with the same mapping as the ids they
+    -- point at or they would silently dangle.
+    FOR ref IN
+        SELECT * FROM (VALUES
+            ('crm_activities',            'account_id'),
+            ('crm_activities',            'contact_id'),
+            ('crm_activities',            'deal_id'),
+            ('crm_buying_signals',        'account_id'),
+            ('crm_contacts',              'account_id'),
+            ('crm_content_assets',        'campaign_id'),
+            ('crm_deals',                 'account_id'),
+            ('crm_email_sends',           'segment_id'),
+            ('crm_journey_enrollments',   'contact_id'),
+            ('crm_journey_enrollments',   'journey_id'),
+            ('crm_journey_enrollments',   'lead_id'),
+            ('crm_journey_step_logs',     'enrollment_id'),
+            ('crm_journey_step_logs',     'step_id'),
+            ('crm_journey_steps',         'journey_id'),
+            ('crm_leads',                 'converted_deal_id'),
+            ('crm_loyalty_outlets',       'account_id'),
+            ('crm_loyalty_outlets',       'tier_id'),
+            ('crm_loyalty_promotions',    'tier_id'),
+            ('crm_mqls',                  'campaign_id'),
+            ('crm_mqls',                  'lead_id'),
+            ('crm_outlets',               'account_id'),
+            ('crm_personas',              'journey_id'),
+            ('crm_personas',              'segment_id'),
+            ('crm_quotes',                'account_id'),
+            ('crm_quotes',                'deal_id'),
+            ('crm_social_posts',          'campaign_id'),
+            ('crm_tickets',               'account_id'),
+            ('crm_tickets',               'contact_id'),
+            ('crm_tickets',               'deal_id'),
+            ('crm_bridge_field_mappings', 'stream_id'),
+            ('crm_bridge_sync_log',       'stream_id')
+        ) AS v(tbl, col)
+    LOOP
+        CONTINUE WHEN NOT EXISTS (
+            SELECT 1 FROM pg_attribute a
+             WHERE a.attrelid = to_regclass(ref.tbl)
+               AND a.attname  = ref.col
+               AND a.attnum > 0
+               AND NOT a.attisdropped
+               AND a.atttypid <> 'uuid'::regtype);
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN %I TYPE UUID USING crm_id_to_uuid(%I::text)',
+            ref.tbl, ref.col, ref.col);
+    END LOOP;
+
+    -- ---- restore the foreign keys ------------------------------------------
+    FOR fk IN
+        SELECT * FROM (VALUES
+            ('crm_activities',          'crm_activities_account_id_fkey',           'account_id',    'crm_accounts',            'SET NULL'),
+            ('crm_activities',          'crm_activities_contact_id_fkey',           'contact_id',    'crm_contacts',            'SET NULL'),
+            ('crm_activities',          'crm_activities_deal_id_fkey',              'deal_id',       'crm_deals',               'SET NULL'),
+            ('crm_buying_signals',      'crm_buying_signals_account_id_fkey',       'account_id',    'crm_accounts',            'SET NULL'),
+            ('crm_contacts',            'crm_contacts_account_id_fkey',             'account_id',    'crm_accounts',            'SET NULL'),
+            ('crm_deals',               'crm_deals_account_id_fkey',                'account_id',    'crm_accounts',            'SET NULL'),
+            ('crm_journey_enrollments', 'crm_journey_enrollments_journey_id_fkey',  'journey_id',    'crm_journeys',            'CASCADE'),
+            ('crm_journey_step_logs',   'crm_journey_step_logs_enrollment_id_fkey', 'enrollment_id', 'crm_journey_enrollments', 'CASCADE'),
+            ('crm_journey_steps',       'crm_journey_steps_journey_id_fkey',        'journey_id',    'crm_journeys',            'CASCADE'),
+            ('crm_loyalty_outlets',     'crm_loyalty_outlets_account_id_fkey',      'account_id',    'crm_accounts',            'SET NULL'),
+            ('crm_outlets',             'crm_outlets_account_id_fkey',              'account_id',    'crm_accounts',            'SET NULL'),
+            ('crm_quotes',              'crm_quotes_account_id_fkey',               'account_id',    'crm_accounts',            'SET NULL'),
+            ('crm_quotes',              'crm_quotes_deal_id_fkey',                  'deal_id',       'crm_deals',               'SET NULL'),
+            ('crm_tickets',             'crm_tickets_account_id_fkey',              'account_id',    'crm_accounts',            'SET NULL'),
+            ('crm_tickets',             'crm_tickets_contact_id_fkey',              'contact_id',    'crm_contacts',            'SET NULL'),
+            ('crm_tickets',             'crm_tickets_deal_id_fkey',                 'deal_id',       'crm_deals',               'SET NULL')
+        ) AS v(tbl, name, col, parent, on_delete)
+    LOOP
+        CONTINUE WHEN to_regclass(fk.tbl) IS NULL OR to_regclass(fk.parent) IS NULL;
+        EXECUTE format(
+            'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES %I(id) ON DELETE %s',
+            fk.tbl, fk.name, fk.col, fk.parent, fk.on_delete);
+    END LOOP;
+
+    -- ---- the database mints ids from here on -------------------------------
+    FOREACH t IN ARRAY coded_tables
+    LOOP
+        CONTINUE WHEN to_regclass(t) IS NULL;
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN id SET DEFAULT gen_random_uuid()', t);
+    END LOOP;
 END
-$legacy$;
-
--- ---- drop the foreign keys ------------------------------------------------
-ALTER TABLE crm_activities          DROP CONSTRAINT crm_activities_account_id_fkey;
-ALTER TABLE crm_activities          DROP CONSTRAINT crm_activities_contact_id_fkey;
-ALTER TABLE crm_activities          DROP CONSTRAINT crm_activities_deal_id_fkey;
-ALTER TABLE crm_buying_signals      DROP CONSTRAINT crm_buying_signals_account_id_fkey;
-ALTER TABLE crm_contacts            DROP CONSTRAINT crm_contacts_account_id_fkey;
-ALTER TABLE crm_deals               DROP CONSTRAINT crm_deals_account_id_fkey;
-ALTER TABLE crm_journey_enrollments DROP CONSTRAINT crm_journey_enrollments_journey_id_fkey;
-ALTER TABLE crm_journey_step_logs   DROP CONSTRAINT crm_journey_step_logs_enrollment_id_fkey;
-ALTER TABLE crm_journey_steps       DROP CONSTRAINT crm_journey_steps_journey_id_fkey;
-ALTER TABLE crm_loyalty_outlets     DROP CONSTRAINT crm_loyalty_outlets_account_id_fkey;
-ALTER TABLE crm_outlets             DROP CONSTRAINT crm_outlets_account_id_fkey;
-ALTER TABLE crm_quotes              DROP CONSTRAINT crm_quotes_account_id_fkey;
-ALTER TABLE crm_quotes              DROP CONSTRAINT crm_quotes_deal_id_fkey;
-ALTER TABLE crm_tickets             DROP CONSTRAINT crm_tickets_account_id_fkey;
-ALTER TABLE crm_tickets             DROP CONSTRAINT crm_tickets_contact_id_fkey;
-ALTER TABLE crm_tickets             DROP CONSTRAINT crm_tickets_deal_id_fkey;
-
--- ---- primary keys ---------------------------------------------------------
-ALTER TABLE crm_accounts               ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_activities             ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_audit_entries          ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_bridge_field_mappings  ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_bridge_pending_imports ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_bridge_streams         ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_bridge_sync_log        ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_budget_plans           ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_buying_signals         ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_campaigns              ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_contacts               ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_content_assets         ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_deals                  ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_email_sends            ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_events                 ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_export_customers       ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_export_jobs            ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_journey_enrollments    ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_journey_steps          ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_journeys               ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_leads                  ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_loyalty_outlets        ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_loyalty_promotions     ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_loyalty_tiers          ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_module_records         ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_mqls                   ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_outlets                ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_personas               ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_quotes                 ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_segments               ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_seo_audit_jobs         ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_seo_keywords           ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_social_posts           ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-ALTER TABLE crm_tickets                ALTER COLUMN id TYPE UUID USING crm_id_to_uuid(id);
-
--- ---- referencing columns --------------------------------------------------
-ALTER TABLE crm_activities            ALTER COLUMN account_id    TYPE UUID USING crm_id_to_uuid(account_id);
-ALTER TABLE crm_activities            ALTER COLUMN contact_id    TYPE UUID USING crm_id_to_uuid(contact_id);
-ALTER TABLE crm_activities            ALTER COLUMN deal_id       TYPE UUID USING crm_id_to_uuid(deal_id);
-ALTER TABLE crm_buying_signals        ALTER COLUMN account_id    TYPE UUID USING crm_id_to_uuid(account_id);
-ALTER TABLE crm_contacts              ALTER COLUMN account_id    TYPE UUID USING crm_id_to_uuid(account_id);
-ALTER TABLE crm_content_assets        ALTER COLUMN campaign_id   TYPE UUID USING crm_id_to_uuid(campaign_id);
-ALTER TABLE crm_deals                 ALTER COLUMN account_id    TYPE UUID USING crm_id_to_uuid(account_id);
-ALTER TABLE crm_email_sends           ALTER COLUMN segment_id    TYPE UUID USING crm_id_to_uuid(segment_id);
-ALTER TABLE crm_journey_enrollments   ALTER COLUMN contact_id    TYPE UUID USING crm_id_to_uuid(contact_id);
-ALTER TABLE crm_journey_enrollments   ALTER COLUMN journey_id    TYPE UUID USING crm_id_to_uuid(journey_id);
-ALTER TABLE crm_journey_enrollments   ALTER COLUMN lead_id       TYPE UUID USING crm_id_to_uuid(lead_id);
-ALTER TABLE crm_journey_step_logs     ALTER COLUMN enrollment_id TYPE UUID USING crm_id_to_uuid(enrollment_id);
-ALTER TABLE crm_journey_step_logs     ALTER COLUMN step_id       TYPE UUID USING crm_id_to_uuid(step_id);
-ALTER TABLE crm_journey_steps         ALTER COLUMN journey_id    TYPE UUID USING crm_id_to_uuid(journey_id);
-ALTER TABLE crm_leads                 ALTER COLUMN converted_deal_id TYPE UUID USING crm_id_to_uuid(converted_deal_id);
-ALTER TABLE crm_loyalty_outlets       ALTER COLUMN account_id    TYPE UUID USING crm_id_to_uuid(account_id);
-ALTER TABLE crm_loyalty_outlets       ALTER COLUMN tier_id       TYPE UUID USING crm_id_to_uuid(tier_id);
-ALTER TABLE crm_loyalty_promotions    ALTER COLUMN tier_id       TYPE UUID USING crm_id_to_uuid(tier_id);
-ALTER TABLE crm_mqls                  ALTER COLUMN campaign_id   TYPE UUID USING crm_id_to_uuid(campaign_id);
-ALTER TABLE crm_mqls                  ALTER COLUMN lead_id       TYPE UUID USING crm_id_to_uuid(lead_id);
-ALTER TABLE crm_outlets               ALTER COLUMN account_id    TYPE UUID USING crm_id_to_uuid(account_id);
-ALTER TABLE crm_personas              ALTER COLUMN journey_id    TYPE UUID USING crm_id_to_uuid(journey_id);
-ALTER TABLE crm_personas              ALTER COLUMN segment_id    TYPE UUID USING crm_id_to_uuid(segment_id);
-ALTER TABLE crm_quotes                ALTER COLUMN account_id    TYPE UUID USING crm_id_to_uuid(account_id);
-ALTER TABLE crm_quotes                ALTER COLUMN deal_id       TYPE UUID USING crm_id_to_uuid(deal_id);
-ALTER TABLE crm_social_posts          ALTER COLUMN campaign_id   TYPE UUID USING crm_id_to_uuid(campaign_id);
-ALTER TABLE crm_tickets               ALTER COLUMN account_id    TYPE UUID USING crm_id_to_uuid(account_id);
-ALTER TABLE crm_tickets               ALTER COLUMN contact_id    TYPE UUID USING crm_id_to_uuid(contact_id);
-ALTER TABLE crm_tickets               ALTER COLUMN deal_id       TYPE UUID USING crm_id_to_uuid(deal_id);
-ALTER TABLE crm_bridge_field_mappings ALTER COLUMN stream_id     TYPE UUID USING crm_id_to_uuid(stream_id);
-ALTER TABLE crm_bridge_sync_log       ALTER COLUMN stream_id     TYPE UUID USING crm_id_to_uuid(stream_id);
-
--- ---- restore the foreign keys ---------------------------------------------
-ALTER TABLE crm_activities          ADD CONSTRAINT crm_activities_account_id_fkey FOREIGN KEY (account_id) REFERENCES crm_accounts(id) ON DELETE SET NULL;
-ALTER TABLE crm_activities          ADD CONSTRAINT crm_activities_contact_id_fkey FOREIGN KEY (contact_id) REFERENCES crm_contacts(id) ON DELETE SET NULL;
-ALTER TABLE crm_activities          ADD CONSTRAINT crm_activities_deal_id_fkey FOREIGN KEY (deal_id) REFERENCES crm_deals(id) ON DELETE SET NULL;
-ALTER TABLE crm_buying_signals      ADD CONSTRAINT crm_buying_signals_account_id_fkey FOREIGN KEY (account_id) REFERENCES crm_accounts(id) ON DELETE SET NULL;
-ALTER TABLE crm_contacts            ADD CONSTRAINT crm_contacts_account_id_fkey FOREIGN KEY (account_id) REFERENCES crm_accounts(id) ON DELETE SET NULL;
-ALTER TABLE crm_deals               ADD CONSTRAINT crm_deals_account_id_fkey FOREIGN KEY (account_id) REFERENCES crm_accounts(id) ON DELETE SET NULL;
-ALTER TABLE crm_journey_enrollments ADD CONSTRAINT crm_journey_enrollments_journey_id_fkey FOREIGN KEY (journey_id) REFERENCES crm_journeys(id) ON DELETE CASCADE;
-ALTER TABLE crm_journey_step_logs   ADD CONSTRAINT crm_journey_step_logs_enrollment_id_fkey FOREIGN KEY (enrollment_id) REFERENCES crm_journey_enrollments(id) ON DELETE CASCADE;
-ALTER TABLE crm_journey_steps       ADD CONSTRAINT crm_journey_steps_journey_id_fkey FOREIGN KEY (journey_id) REFERENCES crm_journeys(id) ON DELETE CASCADE;
-ALTER TABLE crm_loyalty_outlets     ADD CONSTRAINT crm_loyalty_outlets_account_id_fkey FOREIGN KEY (account_id) REFERENCES crm_accounts(id) ON DELETE SET NULL;
-ALTER TABLE crm_outlets             ADD CONSTRAINT crm_outlets_account_id_fkey FOREIGN KEY (account_id) REFERENCES crm_accounts(id) ON DELETE SET NULL;
-ALTER TABLE crm_quotes              ADD CONSTRAINT crm_quotes_account_id_fkey FOREIGN KEY (account_id) REFERENCES crm_accounts(id) ON DELETE SET NULL;
-ALTER TABLE crm_quotes              ADD CONSTRAINT crm_quotes_deal_id_fkey FOREIGN KEY (deal_id) REFERENCES crm_deals(id) ON DELETE SET NULL;
-ALTER TABLE crm_tickets             ADD CONSTRAINT crm_tickets_account_id_fkey FOREIGN KEY (account_id) REFERENCES crm_accounts(id) ON DELETE SET NULL;
-ALTER TABLE crm_tickets             ADD CONSTRAINT crm_tickets_contact_id_fkey FOREIGN KEY (contact_id) REFERENCES crm_contacts(id) ON DELETE SET NULL;
-ALTER TABLE crm_tickets             ADD CONSTRAINT crm_tickets_deal_id_fkey FOREIGN KEY (deal_id) REFERENCES crm_deals(id) ON DELETE SET NULL;
-
--- ---- the database mints ids from here on ----------------------------------
-ALTER TABLE crm_accounts               ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_activities             ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_audit_entries          ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_bridge_field_mappings  ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_bridge_pending_imports ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_bridge_streams         ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_bridge_sync_log        ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_budget_plans           ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_buying_signals         ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_campaigns              ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_contacts               ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_content_assets         ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_deals                  ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_email_sends            ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_events                 ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_export_customers       ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_export_jobs            ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_journey_enrollments    ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_journey_steps          ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_journeys               ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_leads                  ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_loyalty_outlets        ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_loyalty_promotions     ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_loyalty_tiers          ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_module_records         ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_mqls                   ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_outlets                ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_personas               ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_quotes                 ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_segments               ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_seo_audit_jobs         ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_seo_keywords           ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_social_posts           ALTER COLUMN id SET DEFAULT gen_random_uuid();
-ALTER TABLE crm_tickets                ALTER COLUMN id SET DEFAULT gen_random_uuid();
+$convert$;
 
 -- The counter table has no purpose once ids are uuid. Repository.NextID and its
 -- callers go with it.
 DROP TABLE IF EXISTS crm_id_counters;
 
-DROP FUNCTION crm_id_to_uuid(TEXT);
+DROP FUNCTION IF EXISTS crm_id_to_uuid(TEXT);
