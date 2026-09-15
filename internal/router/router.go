@@ -126,7 +126,9 @@ func registerSalesRoutes(v1 *gin.RouterGroup, api *handlers.API) {
 	v1.POST("/leads", auth.RequirePerm("leads.create"), api.CreateLead)
 	v1.GET("/leads/:id", auth.RequirePerm("leads.read"), api.GetLead)
 	v1.PATCH("/leads/:id", auth.RequirePerm("leads.update"), api.PatchLead)
-	v1.POST("/leads/:id/convert", auth.RequirePerm("leads.update"), api.ConvertLead)
+	// Conversion creates a deal, so it needs the deal grant too — a caller who
+	// may edit leads but not create deals could otherwise mint one this way.
+	v1.POST("/leads/:id/convert", auth.RequirePerm("leads.update"), auth.RequirePerm("deals.create"), api.ConvertLead)
 
 	v1.GET("/deals", auth.RequirePerm("deals.read"), api.ListDeals)
 	v1.POST("/deals", auth.RequirePerm("deals.create"), api.CreateDeal)

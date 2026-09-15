@@ -20,7 +20,7 @@ func (r *Repository) Lookups(ctx context.Context, kind string) ([]LookupItem, er
 	case "accounts":
 		return r.lookupQuery(ctx, `SELECT id, name, COALESCE(segment,'') FROM crm_accounts ORDER BY name LIMIT 200`)
 	case "contacts":
-		return r.lookupQuery(ctx, `SELECT id, name, COALESCE(account_name,'') FROM crm_contacts ORDER BY name LIMIT 200`)
+		return r.lookupQuery(ctx, `SELECT id, name, COALESCE(account_name,'') FROM crm_contacts WHERE status <> 'inactive' ORDER BY name LIMIT 200`)
 	case "deals":
 		return r.lookupQuery(ctx, `SELECT id, name, COALESCE(account_name,'') FROM crm_deals ORDER BY updated_at DESC LIMIT 200`)
 	case "segments":

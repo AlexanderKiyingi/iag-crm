@@ -59,6 +59,19 @@ var Roles = map[string]RoleSpec{
 		},
 		Modals: []string{"modalNewDeal", "modalNewLead", "modalNewContact"},
 	},
+	"support": {
+		ID: "support", Label: "Support", Full: "Customer Support",
+		Pages:  []string{"overview", "accounts", "contacts", "activities", "tickets", "outlet360"},
+		Modals: []string{"modalNewContact"},
+	},
+	"viewer": {
+		ID: "viewer", Label: "Viewer · read only", Full: "Read-only Viewer",
+		Pages: []string{
+			"overview", "pipeline", "accounts", "contacts", "leads", "deals", "quotes",
+			"activities", "tickets", "campaigns", "insights",
+		},
+		Modals: []string{},
+	},
 }
 
 func RoleFromGroups(groups []string, isSuperuser bool) string {
@@ -75,10 +88,37 @@ func RoleFromGroups(groups []string, isSuperuser bool) string {
 			return "head_commercial"
 		case "sales_rep", "sales-rep", "sales":
 			return "sales_rep"
+		// The groups iag-authentication actually seeds (see docs/IAG_CUTOVER.md
+		// in the Next.js app). None of them matched the legacy names above, so
+		// every platform user — administrators and viewers included — fell to
+		// the default below and was owner-scoped to records carrying their own
+		// email. With the app's free-text Owner field that meant they saw
+		// nothing at all.
+		case "crm-administrator", "crm_administrator":
+			return "md"
+		case "crm-sales-manager", "crm_sales_manager":
+			return "head_commercial"
+		case "crm-marketing", "crm_marketing":
+			return "head_marketing"
+		case "crm-sales-rep", "crm_sales_rep":
+			return "sales_rep"
+		case "crm-support", "crm_support":
+			return "support"
+		case "crm-viewer", "crm_viewer":
+			return "viewer"
 		}
 	}
+	// Unknown groups fail closed to the narrowest role. Permissions still gate
+	// every route under strict RBAC; this only decides row-level visibility.
 	return "sales_rep"
 }
+
+// ScopedRoles are the roles confined to records they own. Kept as a set so
+// the two places that scope (list and single-record fetch) cannot drift.
+var ScopedRoles = map[string]bool{"sales_rep": true}
+
+// IsScopedRole reports whether a role sees only its own records.
+func IsScopedRole(role string) bool { return ScopedRoles[role] }
 
 func stringsToLower(s string) string {
 	return strings.ToLower(strings.ReplaceAll(s, " ", "_"))

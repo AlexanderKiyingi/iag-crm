@@ -62,6 +62,10 @@ type Contact struct {
 	Owner     string `json:"owner"`
 	BuyerRole string `json:"buyer_role,omitempty"`
 	Primary   bool   `json:"primary"`
+	// Status is active/inactive (ContactStatuses). Promoted out of attrs by
+	// 0013: an inactive contact must be skipped by journey enrolment and the
+	// lookups, and neither can read attrs.
+	Status string `json:"status"`
 	// Attrs is free-form overflow for client fields this service has no promoted
 	// column for. See db/migrations/0008_entity_attrs.sql.
 	Attrs     map[string]any `json:"attrs,omitempty"`
@@ -139,6 +143,7 @@ type Quote struct {
 	AccountID    string          `json:"account_id,omitempty"`
 	Account      string          `json:"account"`
 	DealID       string          `json:"deal_id,omitempty"`
+	DealName     string          `json:"deal_name,omitempty"`
 	Template     string          `json:"template"`
 	Currency     string          `json:"currency"`
 	Incoterms    string          `json:"incoterms"`
@@ -164,6 +169,10 @@ type Activity struct {
 	Account    string    `json:"account,omitempty"`
 	ContactID  string    `json:"contact_id,omitempty"`
 	DealID     string    `json:"deal_id,omitempty"`
+	// Names for the two ids above, filled on read. The record clients hold
+	// one string per field, so they need the name to show and send back.
+	ContactName string `json:"contact_name,omitempty"`
+	DealName    string `json:"deal_name,omitempty"`
 	OutletRef  string    `json:"outlet_ref,omitempty"`
 	Owner      string    `json:"owner"`
 	OccurredAt time.Time `json:"occurred_at"`
@@ -181,6 +190,8 @@ type Ticket struct {
 	AccountID   string     `json:"account_id,omitempty"`
 	Account     string     `json:"account"`
 	ContactID   string     `json:"contact_id,omitempty"`
+	ContactName string     `json:"contact_name,omitempty"`
+	DealName    string     `json:"deal_name,omitempty"`
 	OutletRef   string     `json:"outlet_ref,omitempty"`
 	DealID      string     `json:"deal_id,omitempty"`
 	Subject     string     `json:"subject"`

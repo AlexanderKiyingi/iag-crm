@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,17 +49,28 @@ func TestEncodeAttrsEmptyIsEmptyObject(t *testing.T) {
 
 // Replace, not merge — otherwise a value the operator deleted comes back on the
 // next read, because there is no way to express removal.
-func TestPatchAttrsIsReplaceNotMerge(t *testing.T) {
-	attrs, ok := patchAttrs(map[string]any{"attrs": map[string]any{"only": "this"}})
+func TestPatchAttrsMergesAndNullDeletes(t *testing.T) {
+	p, ok := patchAttrs(map[string]any{"attrs": map[string]any{"only": "this", "gone": nil}})
 	if !ok {
 		t.Fatal("attrs key present but not read")
 	}
-	if len(attrs) != 1 || attrs["only"] != "this" {
-		t.Errorf("attrs = %v, want exactly {only: this}", attrs)
+	if p.Replace {
+		t.Error("an object must merge, not replace")
+	}
+	if got := p.SetExpr(3); !strings.Contains(got, "jsonb_strip_nulls") || !strings.Contains(got, "|| $3") {
+		t.Errorf("SetExpr = %q, want a strip_nulls merge on $3", got)
+	}
+	// The null must survive marshalling: it is what strip_nulls turns into a delete.
+	if got := string(p.Arg()); !strings.Contains(got, `"gone":null`) {
+		t.Errorf("Arg = %s, want the null kept", got)
 	}
 
-	if cleared, ok := patchAttrs(map[string]any{"attrs": nil}); !ok || len(cleared) != 0 {
-		t.Errorf("explicit null should clear attrs, got %v ok=%v", cleared, ok)
+	cleared, ok := patchAttrs(map[string]any{"attrs": nil})
+	if !ok || !cleared.Replace || len(cleared.Attrs) != 0 {
+		t.Errorf("explicit null should replace with {}, got %+v ok=%v", cleared, ok)
+	}
+	if got := cleared.SetExpr(1); got != "attrs = $1::jsonb" {
+		t.Errorf("clear SetExpr = %q", got)
 	}
 }
 

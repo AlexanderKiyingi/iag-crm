@@ -82,7 +82,7 @@ func viewerScope(c *gin.Context) string {
 	if !ok || claims == nil {
 		return ""
 	}
-	if models.RoleFromGroups(claims.Groups, claims.IsSuperuser) != "sales_rep" {
+	if !models.IsScopedRole(models.RoleFromGroups(claims.Groups, claims.IsSuperuser)) {
 		return ""
 	}
 	return strings.TrimSpace(claims.Email)
@@ -98,7 +98,7 @@ func enforceOwner(c *gin.Context, ownerEmail string) bool {
 	if !ok || claims == nil {
 		return true
 	}
-	if models.RoleFromGroups(claims.Groups, claims.IsSuperuser) != "sales_rep" {
+	if !models.IsScopedRole(models.RoleFromGroups(claims.Groups, claims.IsSuperuser)) {
 		return true
 	}
 	if ownerEmail != "" && claims.Email != "" && ownerEmail != claims.Email {

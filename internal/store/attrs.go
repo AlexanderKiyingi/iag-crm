@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"encoding/json"
 	"strconv"
 	"time"
@@ -37,27 +38,59 @@ func encodeAttrs(attrs map[string]any) []byte {
 	return raw
 }
 
+// AttrsPatch is what a sparse PATCH body said about `attrs`, ready to be
+// turned into one SET clause by SetExpr/Arg.
+type AttrsPatch struct {
+	Attrs   map[string]any
+	Replace bool
+}
+
 // patchAttrs reads an `attrs` object out of a sparse PATCH body.
 //
-// Semantics are **replace, not merge**: the key is absent → attrs are left
-// alone; the key is present → it becomes the whole map. That matches how the
-// clients actually behave (the record form submits every field it owns on every
-// edit) and it is the only version where clearing a field works — a merge would
-// make removal impossible, so a value an operator deleted would come back on
-// the next read.
-func patchAttrs(patch map[string]any) (map[string]any, bool) {
+// Semantics are **merge, with null as delete**. The key absent → attrs are
+// left alone. An object → its keys overwrite the stored ones, a key set to
+// JSON null is removed, and every key the client did not mention survives.
+// Explicit `attrs: null` → the whole map is cleared.
+//
+// It used to be replace. That matched the record form, which submits every
+// field it owns — but it also wiped every key the form did NOT own: anything
+// the bridge, a journey step or another client had put there vanished on the
+// next app save, silently. Merge keeps those; null keeps "clear this field"
+// possible, which is the one thing replace had going for it.
+func patchAttrs(patch map[string]any) (AttrsPatch, bool) {
 	raw, ok := patch["attrs"]
 	if !ok {
-		return nil, false
+		return AttrsPatch{}, false
 	}
 	switch v := raw.(type) {
 	case map[string]any:
-		return v, true
+		return AttrsPatch{Attrs: v}, true
 	case nil:
-		return map[string]any{}, true
+		return AttrsPatch{Attrs: map[string]any{}, Replace: true}, true
 	default:
-		return nil, false
+		return AttrsPatch{}, false
 	}
+}
+
+// SetExpr is the SQL for the attrs column at placeholder $i.
+func (p AttrsPatch) SetExpr(i int) string {
+	if p.Replace {
+		return fmt.Sprintf("attrs = $%d::jsonb", i)
+	}
+	return fmt.Sprintf("attrs = jsonb_strip_nulls(COALESCE(attrs, '{}'::jsonb) || $%d::jsonb)", i)
+}
+
+// Arg is the JSON bound to that placeholder. Nulls are kept on purpose:
+// jsonb_strip_nulls on the merged result is what turns them into deletions.
+func (p AttrsPatch) Arg() []byte {
+	if len(p.Attrs) == 0 {
+		return []byte("{}")
+	}
+	raw, err := json.Marshal(p.Attrs)
+	if err != nil {
+		return []byte("{}")
+	}
+	return raw
 }
 
 // parsePatchTime coerces a JSON value from a sparse PATCH body into a nullable
