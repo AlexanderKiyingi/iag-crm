@@ -92,3 +92,20 @@ func TestApplyScope_bindsRatherThanInterpolates(t *testing.T) {
 		t.Fatal("scope value was interpolated into SQL; it must be a bound parameter")
 	}
 }
+
+func TestApplyActivityScopeWidensToOwnedAccounts(t *testing.T) {
+	where := []string{"1=1"}
+	args := []any{}
+	i := 1
+	where, args = applyActivityScope(ListOpts{ScopeOwner: "rep@iag.test"}, where, args, &i)
+	if len(where) != 2 || len(args) != 1 || i != 2 {
+		t.Fatalf("scope not applied: where=%v args=%v i=%d", where, args, i)
+	}
+	if !strings.Contains(where[1], "owner = $1") || !strings.Contains(where[1], "crm_accounts WHERE owner = $1") {
+		t.Errorf("clause = %q, want owner OR owned-account", where[1])
+	}
+	where, args = applyActivityScope(ListOpts{}, []string{"1=1"}, nil, &i)
+	if len(where) != 1 || len(args) != 0 {
+		t.Error("no scope must add nothing")
+	}
+}

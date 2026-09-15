@@ -500,6 +500,11 @@ func (h *API) GetActivity(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "get activity failed")
 		return
 	}
+	// Same boundary as ListActivities: the caller's own, or on their account.
+	if !h.activityVisible(c, item) {
+		notFound(c)
+		return
+	}
 	c.JSON(http.StatusOK, item)
 }
 

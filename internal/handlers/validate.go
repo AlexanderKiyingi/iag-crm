@@ -176,3 +176,17 @@ func parseFloat(s string) (float64, bool) {
 	}
 	return n, true
 }
+
+// activityVisible applies the activity scope to one record: an unscoped
+// caller sees everything; a scoped one sees what they own or what sits on an
+// account they own. Mirrors applyActivityScope in the store.
+func (h *API) activityVisible(c *gin.Context, item models.Activity) bool {
+	if !callerIsScoped(c) {
+		return true
+	}
+	email := callerEmail(c)
+	if email == "" || item.Owner == email {
+		return true
+	}
+	return h.Repo.AccountOwner(c.Request.Context(), item.AccountID) == email
+}
