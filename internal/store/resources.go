@@ -249,7 +249,14 @@ func (r *Repository) ListActivities(ctx context.Context, opts ListOpts) ([]model
 		}
 		out = append(out, a)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	// Names for contact_id / deal_id. Dropped once already when the scope
+	// change rewrote this tail, which left every list read blank on the links
+	// the single-record read still carried.
+	r.fillActivityLinks(ctx, out)
+	return out, total, nil
 }
 
 type ActivityInput struct {
