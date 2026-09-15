@@ -244,6 +244,32 @@ func applyScope(opts ListOpts, col string, where []string, args []any, i *int) (
 	return where, args
 }
 
+// applyActivityScope is applyScope for crm_activities: owned by the caller,
+// or on an account the caller owns. See ListActivities for why.
+func applyActivityScope(opts ListOpts, where []string, args []any, i *int) ([]string, []any) {
+	if opts.ScopeOwner == "" {
+		return where, args
+	}
+	where = append(where, fmt.Sprintf(
+		"(owner = $%d OR account_id IN (SELECT id FROM crm_accounts WHERE owner = $%d))", *i, *i))
+	args = append(args, opts.ScopeOwner)
+	*i++
+	return where, args
+}
+
+// AccountOwner returns the owner of an account, or "" when the id is blank
+// or unknown. Used by the single-record fetch to apply the activity scope.
+func (r *Repository) AccountOwner(ctx context.Context, accountID string) string {
+	if accountID == "" {
+		return ""
+	}
+	var owner string
+	if err := r.db(ctx).QueryRow(ctx, `SELECT owner FROM crm_accounts WHERE id::text = $1`, accountID).Scan(&owner); err != nil {
+		return ""
+	}
+	return owner
+}
+
 // ClampLimit is the page size a list query will actually apply: the default
 // when none was asked for, and the ceiling when too much was.
 //

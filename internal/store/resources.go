@@ -209,28 +209,33 @@ func (r *Repository) ListActivities(ctx context.Context, opts ListOpts) ([]model
 	// Optional type filter (comma-separated), so callers can page a single
 	// activity kind (task/meeting/call) without over-fetching and filtering client-side.
 	types := splitCSV(opts.Type)
-	where := ""
-	args := []any{opts.Limit, opts.Offset}
+	where := []string{"1=1"}
+	args := []any{}
+	i := 1
+	// Activities were the one collection with no owner scope, so a sales_rep
+	// saw every follow-up in the company. The scope is wider than the other
+	// tables' `owner = me` on purpose: a rep's follow-ups are often logged by
+	// someone else about the rep's account (a manager's call note, a support
+	// visit), and hiding those would make the rep's own 360 lie to them. So a
+	// scoped caller sees what they own OR what is on an account they own.
+	where, args = applyActivityScope(opts, where, args, &i)
 	if len(types) > 0 {
-		where = " WHERE activity_type = ANY($3)"
+		where = append(where, fmt.Sprintf("activity_type = ANY($%d)", i))
 		args = append(args, types)
+		i++
 	}
+	whereSQL := strings.Join(where, " AND ")
 
 	var total int
-	countQ := "SELECT COUNT(*)::int FROM crm_activities"
-	if where != "" {
-		countQ += " WHERE activity_type = ANY($1)"
-		if err := r.db(ctx).QueryRow(ctx, countQ, types).Scan(&total); err != nil {
-			return nil, 0, err
-		}
-	} else if err := r.db(ctx).QueryRow(ctx, countQ).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_activities WHERE "+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
+	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, due_at, status, attrs, created_at
-		FROM crm_activities`+where+`
-		ORDER BY occurred_at DESC LIMIT $1 OFFSET $2
+		FROM crm_activities WHERE `+whereSQL+`
+		ORDER BY occurred_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1)+`
 	`, args...)
 	if err != nil {
 		return nil, 0, err
