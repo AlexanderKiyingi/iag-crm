@@ -68,7 +68,11 @@ func (r *Repository) ListQuotes(ctx context.Context, opts ListOpts) ([]models.Qu
 		}
 		out = append(out, q)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	r.fillQuoteLinks(ctx, out)
+	return out, total, nil
 }
 
 type QuoteInput struct {
@@ -76,6 +80,8 @@ type QuoteInput struct {
 	Account      string                 `json:"account"`
 	AccountID    string                 `json:"account_id"`
 	DealID       string                 `json:"deal_id"`
+	// Deal is a name resolved to DealID when that is blank.
+	Deal         string                 `json:"deal"`
 	Template     string                 `json:"template"`
 	Currency     string                 `json:"currency"`
 	Incoterms    string                 `json:"incoterms"`
@@ -102,13 +108,21 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 		}
 		accountID = resolved
 	}
+	dealID := in.DealID
+	if dealID == "" && in.Deal != "" {
+		resolved, err := r.resolveDealID(ctx, in.Deal)
+		if err != nil {
+			return models.Quote{}, err
+		}
+		dealID = resolved
+	}
 	lineRaw, _ := json.Marshal(in.LineItems)
 	now := time.Now().UTC()
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_quotes (id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
 			valid_until, total, status, version, owner, line_items, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'draft',1,$12,$13,$14,$14)
-	`, id, in.Ref, nullStr(accountID), in.Account, nullStr(in.DealID), in.Template, in.Currency,
+	`, id, in.Ref, nullStr(accountID), in.Account, nullStr(dealID), in.Template, in.Currency,
 		in.Incoterms, in.PaymentTerms, in.ValidUntil, in.Total, in.Owner, lineRaw, now)
 	if err != nil {
 		return models.Quote{}, err
@@ -118,7 +132,7 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 		       valid_until, total, status, version, owner, line_items, finance_ar_ref, contract_ref, created_at, updated_at
 		FROM crm_quotes WHERE id = $1
 	`, id)
-	return scanQuote(row)
+	return r.quoteWithLinks(ctx, row)
 }
 
 func (r *Repository) GetQuote(ctx context.Context, id string) (models.Quote, error) {
@@ -127,7 +141,7 @@ func (r *Repository) GetQuote(ctx context.Context, id string) (models.Quote, err
 		       valid_until, total, status, version, owner, line_items, finance_ar_ref, contract_ref, created_at, updated_at
 		FROM crm_quotes WHERE id = $1
 	`, id)
-	return scanQuote(row)
+	return r.quoteWithLinks(ctx, row)
 }
 
 func (r *Repository) PatchQuote(ctx context.Context, id string, patch map[string]any) (models.Quote, error) {
@@ -241,6 +255,11 @@ type ActivityInput struct {
 	AccountID  string    `json:"account_id"`
 	ContactID  string    `json:"contact_id"`
 	DealID     string    `json:"deal_id"`
+	// Contact and Deal are names, resolved to the ids above when those are
+	// blank — the same convention as Account. The record clients only have
+	// strings.
+	Contact    string    `json:"contact"`
+	Deal       string    `json:"deal"`
 	OutletRef  string    `json:"outlet_ref"`
 	Owner      string    `json:"owner"`
 	OccurredAt time.Time `json:"occurred_at"`
@@ -267,10 +286,17 @@ func (r *Repository) CreateActivity(ctx context.Context, in ActivityInput) (mode
 		}
 		accountID = resolved
 	}
-	_, err := r.db(ctx).Exec(ctx, `
+	contactID, dealID, err := r.resolveLinks(ctx, in.ContactID, in.Contact, in.DealID, in.Deal)
+	if err != nil {
+		return models.Activity{}, err
+	}
+	if in.Status == "" {
+		in.Status = models.ActivityStatusPlanned
+	}
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_activities (id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, due_at, status, attrs, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
-	`, id, in.Type, in.Subject, in.Body, nullStr(accountID), in.Account, nullStr(in.ContactID), nullStr(in.DealID), nullStr(in.OutletRef), in.Owner, in.OccurredAt,
+	`, id, in.Type, in.Subject, in.Body, nullStr(accountID), in.Account, nullStr(contactID), nullStr(dealID), nullStr(in.OutletRef), in.Owner, in.OccurredAt,
 		in.DueAt, in.Status, encodeAttrs(in.Attrs))
 	if err != nil {
 		return models.Activity{}, err
@@ -279,7 +305,12 @@ func (r *Repository) CreateActivity(ctx context.Context, in ActivityInput) (mode
 		SELECT id, activity_type, subject, body, account_id, account_name, contact_id, deal_id, outlet_ref, owner, occurred_at, due_at, status, attrs, created_at
 		FROM crm_activities WHERE id = $1
 	`, id)
-	return scanActivity(row)
+	a, err := scanActivity(row)
+	if err != nil {
+		return a, err
+	}
+	r.fillActivityLinks(ctx, []models.Activity{a})
+	return r.GetActivity(ctx, id)
 }
 
 func scanTicket(row pgx.Row) (models.Ticket, error) {
@@ -355,7 +386,11 @@ func (r *Repository) ListTickets(ctx context.Context, opts ListOpts) ([]models.T
 		}
 		out = append(out, t)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	r.fillTicketLinks(ctx, out)
+	return out, total, nil
 }
 
 type TicketInput struct {
@@ -364,6 +399,10 @@ type TicketInput struct {
 	ContactID   string `json:"contact_id"`
 	OutletRef   string `json:"outlet_ref"`
 	DealID      string `json:"deal_id"`
+	// Names resolved to contact_id / deal_id when those are blank; see
+	// ActivityInput.
+	Contact     string `json:"contact"`
+	Deal        string `json:"deal"`
 	Subject     string `json:"subject"`
 	Type        string `json:"type"`
 	Priority    string `json:"priority"`
@@ -401,17 +440,23 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 		}
 		accountID = resolved
 	}
-	sla := time.Now().UTC().Add(24 * time.Hour)
+	contactID, dealID, err := r.resolveLinks(ctx, in.ContactID, in.Contact, in.DealID, in.Deal)
+	if err != nil {
+		return models.Ticket{}, err
+	}
+	// The SLA clock runs from when the incident happened, not from when it
+	// was typed in, and its length depends on priority (models.TicketSLA).
 	now := time.Now().UTC()
 	occurredAt := in.OccurredAt
 	if occurredAt == nil {
 		occurredAt = &now
 	}
-	_, err := r.db(ctx).Exec(ctx, `
+	sla := occurredAt.Add(models.SLAFor(in.Priority))
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_tickets (id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type,
 			priority, channel, status, owner, description, occurred_at, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19)
-	`, id, nullStr(accountID), in.Account, nullStr(in.ContactID), nullStr(in.OutletRef), nullStr(in.DealID),
+	`, id, nullStr(accountID), in.Account, nullStr(contactID), nullStr(in.OutletRef), nullStr(dealID),
 		in.Subject, in.Type, in.Priority, in.Channel, status, in.Owner, in.Description, occurredAt, sla,
 		in.ResolvedAt, in.Resolution, encodeAttrs(in.Attrs), now)
 	if err != nil {
@@ -422,7 +467,7 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 		       status, owner, description, dms_claim_ref, occurred_at, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
 	`, id)
-	return scanTicket(row)
+	return r.ticketWithLinks(ctx, row)
 }
 
 func (r *Repository) GetTicket(ctx context.Context, id string) (models.Ticket, error) {
@@ -431,7 +476,7 @@ func (r *Repository) GetTicket(ctx context.Context, id string) (models.Ticket, e
 		       status, owner, description, dms_claim_ref, occurred_at, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
 	`, id)
-	return scanTicket(row)
+	return r.ticketWithLinks(ctx, row)
 }
 
 func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[string]any) (models.Ticket, error) {
@@ -467,6 +512,19 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 	if v, ok := patch["sla_due_at"]; ok {
 		add("sla_due_at", parsePatchTime(v))
 	}
+	// A priority change re-derives the SLA unless the caller set one
+	// explicitly in the same request.
+	if v, ok := patch["priority"].(string); ok {
+		if _, explicit := patch["sla_due_at"]; !explicit {
+			sets = append(sets, fmt.Sprintf("sla_due_at = COALESCE(occurred_at, created_at) + $%d::interval", i))
+			args = append(args, models.SLAFor(v).String())
+			i++
+		}
+	}
+	var err error
+	if i, err = r.patchLinks(ctx, patch, &sets, &args, i); err != nil {
+		return models.Ticket{}, err
+	}
 	// Keep the foreign key with the name, for the reason PatchDeal spells out:
 	// a display name and an account_id that disagree look correct on screen and
 	// are wrong in every join.
@@ -478,7 +536,9 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 		add("account_id", nullStr(accountID))
 	}
 	if attrs, ok := patchAttrs(patch); ok {
-		add("attrs", encodeAttrs(attrs))
+		sets = append(sets, attrs.SetExpr(i))
+		args = append(args, attrs.Arg())
+		i++
 	}
 	if len(sets) == 1 {
 		row := r.db(ctx).QueryRow(ctx, `
@@ -486,10 +546,10 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 			       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 			FROM crm_tickets WHERE id = $1
 		`, id)
-		return scanTicket(row)
+		return r.ticketWithLinks(ctx, row)
 	}
 	args = append(args, id)
-	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_tickets SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
+	_, err = r.db(ctx).Exec(ctx, `UPDATE crm_tickets SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
 	if err != nil {
 		return models.Ticket{}, err
 	}
@@ -498,7 +558,7 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 		       status, owner, description, dms_claim_ref, occurred_at, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
 		FROM crm_tickets WHERE id = $1
 	`, id)
-	return scanTicket(row)
+	return r.ticketWithLinks(ctx, row)
 }
 
 func scanCampaign(row pgx.Row) (models.Campaign, error) {
@@ -622,4 +682,38 @@ func (r *Repository) CreateCampaign(ctx context.Context, in CampaignInput) (mode
 		FROM crm_campaigns WHERE id = $1
 	`, id)
 	return scanCampaign(row)
+}
+
+// ticketWithLinks scans one ticket and fills its contact/deal names.
+func (r *Repository) ticketWithLinks(ctx context.Context, row pgx.Row) (models.Ticket, error) {
+	t, err := scanTicket(row)
+	if err != nil {
+		return t, err
+	}
+	one := []models.Ticket{t}
+	r.fillTicketLinks(ctx, one)
+	return one[0], nil
+}
+
+func (r *Repository) fillQuoteLinks(ctx context.Context, items []models.Quote) {
+	var dealIDs []string
+	for _, q := range items {
+		if q.DealID != "" {
+			dealIDs = append(dealIDs, q.DealID)
+		}
+	}
+	deals, _ := r.linkNames(ctx, "crm_deals", dealIDs)
+	for i := range items {
+		items[i].DealName = deals[items[i].DealID]
+	}
+}
+
+func (r *Repository) quoteWithLinks(ctx context.Context, row pgx.Row) (models.Quote, error) {
+	q, err := scanQuote(row)
+	if err != nil {
+		return q, err
+	}
+	one := []models.Quote{q}
+	r.fillQuoteLinks(ctx, one)
+	return one[0], nil
 }

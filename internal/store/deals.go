@@ -211,7 +211,9 @@ func (r *Repository) PatchDeal(ctx context.Context, id string, patch map[string]
 		add("close_date", parsePatchTime(v))
 	}
 	if attrs, ok := patchAttrs(patch); ok {
-		add("attrs", encodeAttrs(attrs))
+		sets = append(sets, attrs.SetExpr(i))
+		args = append(args, attrs.Arg())
+		i++
 	}
 	// Stamp the close date when a plain PATCH moves the deal to won or lost.
 	//
@@ -342,5 +344,30 @@ func (r *Repository) PipelineSummary(ctx context.Context) (map[string]any, error
 		"avg_deal_size":     avgDeal,
 		"velocity_days":     int(avgDays),
 		"win_rate":          winRate,
+	}, nil
+}
+
+// DealForecast sums the open pipeline expected to close within the horizon.
+func (r *Repository) DealForecast(ctx context.Context, horizonDays int) (map[string]any, error) {
+	var count int
+	var expected, committed float64
+	err := r.db(ctx).QueryRow(ctx, `
+		SELECT
+			COUNT(*)::int,
+			COALESCE(SUM(amount * probability / 100.0), 0)::float8,
+			COALESCE(SUM(CASE WHEN stage IN ('proposal','negotiation') THEN amount ELSE 0 END), 0)::float8
+		FROM crm_deals
+		WHERE stage NOT IN ('won','lost')
+		  AND close_date IS NOT NULL
+		  AND close_date <= NOW() + ($1 || ' days')::interval
+	`, fmt.Sprint(horizonDays)).Scan(&count, &expected, &committed)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"horizon_days": horizonDays,
+		"deal_count":   count,
+		"expected":     expected,
+		"committed":    committed,
 	}, nil
 }

@@ -57,6 +57,9 @@ Cross-entity dropdowns in modals map to `GET /v1/lookups/{accounts|contacts|deal
 - Gateway proxies `/api/v1/crm` → CRM `:4101` (Bearer forwarded)
 - Permissions registered at boot (`crm.*` + `audit.*`) when `SERVICE_CLIENT_SECRET` is set
 - Handler-level `RequirePerm` on every route; gateway policies for audit/admin/destructive ops
+- Row-level scoping: `sales_rep` (group `crm-sales-rep`) sees only rows where `owner` = their email; a blank owner on create is stamped from the token. The other seeded groups (`crm-administrator`, `crm-sales-manager`, `crm-marketing`, `crm-support`, `crm-viewer`) are unscoped — see `models.RoleFromGroups`.
+- Controlled vocabularies (`internal/models/vocab.go`): deal stage, lead/ticket/activity/contact status, ticket priority (P1–P4, drives SLA) and channel, 0–100 for score/probability, ISO currency codes. Out-of-vocabulary writes are 400.
+- `attrs` PATCH merges (null deletes a key); `attrs: null` clears the map.
 - Kafka events on `iag.commercial` when `EVENT_BUS_ENABLED=true` (deal updates, lead convert, bridge sync, tickets)
 - DMS/ERP/LIMS integration: bridge streams + stub enrichment on `/outlets/:id/360`, `/export-customers` (extend with live DMS in phase 2)
 

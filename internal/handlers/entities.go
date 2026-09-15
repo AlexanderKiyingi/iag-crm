@@ -126,6 +126,10 @@ func (h *API) CreateContact(c *gin.Context) {
 		badRequest(c, "name and email are required")
 		return
 	}
+	stampOwner(c, &in.Owner)
+	if !requireVocab(c, "status", in.Status, models.ContactStatuses) {
+		return
+	}
 	var item models.Contact
 	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
 		var e error
@@ -144,7 +148,11 @@ func (h *API) CreateContact(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, "ContactCreated", store.AuditDetail("contact", item.ID, "created"))
-	_ = journey.AutoEnrollContact(c.Request.Context(), h.Repo, item.ID, item.Email, item.Name)
+	// An inactive contact is one the operator has asked us to stop working; it
+	// should not be dropped into a journey on the way in.
+	if item.Status != models.ContactStatusInactive {
+		_ = journey.AutoEnrollContact(c.Request.Context(), h.Repo, item.ID, item.Email, item.Name)
+	}
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -152,6 +160,9 @@ func (h *API) PatchContact(c *gin.Context) {
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
 		badRequest(c, "invalid body")
+		return
+	}
+	if !guardOwnerPatch(c, patch) || !patchVocab(c, patch, "status", models.ContactStatuses) {
 		return
 	}
 	item, err := h.Repo.PatchContact(c.Request.Context(), c.Param("id"), patch)
@@ -198,6 +209,12 @@ func (h *API) CreateLead(c *gin.Context) {
 		badRequest(c, "name and email are required")
 		return
 	}
+	stampOwner(c, &in.Owner)
+	if !requireVocab(c, "status", in.Status, models.LeadStatuses) ||
+		!requireRange(c, "score", in.Score, 0, 100) ||
+		!requireCurrency(c, &in.Currency) {
+		return
+	}
 	item, err := h.Repo.CreateLead(c.Request.Context(), in)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create lead failed")
@@ -211,6 +228,12 @@ func (h *API) PatchLead(c *gin.Context) {
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
 		badRequest(c, "invalid body")
+		return
+	}
+	if !guardOwnerPatch(c, patch) ||
+		!patchVocab(c, patch, "status", models.LeadStatuses) ||
+		!patchRange(c, patch, "score", 0, 100) ||
+		!patchCurrency(c, patch) {
 		return
 	}
 	item, err := h.Repo.PatchLead(c.Request.Context(), c.Param("id"), patch)
@@ -285,6 +308,12 @@ func (h *API) CreateDeal(c *gin.Context) {
 		badRequest(c, "name is required")
 		return
 	}
+	stampOwner(c, &in.Owner)
+	if !requireVocab(c, "stage", in.Stage, models.DealStages) ||
+		!requireRange(c, "probability", in.Probability, 0, 100) ||
+		!requireCurrency(c, &in.Currency) {
+		return
+	}
 	item, err := h.Repo.CreateDeal(c.Request.Context(), in)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create deal failed")
@@ -298,6 +327,12 @@ func (h *API) PatchDeal(c *gin.Context) {
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
 		badRequest(c, "invalid body")
+		return
+	}
+	if !guardOwnerPatch(c, patch) ||
+		!patchVocab(c, patch, "stage", models.DealStages) ||
+		!patchRange(c, patch, "probability", 0, 100) ||
+		!patchCurrency(c, patch) {
 		return
 	}
 	var item models.Deal
@@ -336,6 +371,9 @@ func (h *API) SetDealStage(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&in); err != nil || in.Stage == "" {
 		badRequest(c, "stage is required")
+		return
+	}
+	if !requireVocab(c, "stage", in.Stage, models.DealStages) {
 		return
 	}
 	var item models.Deal
@@ -435,8 +473,12 @@ func (h *API) ListActivities(c *gin.Context) {
 
 func (h *API) CreateActivity(c *gin.Context) {
 	var in store.ActivityInput
-	if err := c.ShouldBindJSON(&in); err != nil || in.Subject == "" {
+	if err := bindJSONCoerced(c, &in); err != nil || in.Subject == "" {
 		badRequest(c, "subject is required")
+		return
+	}
+	stampOwner(c, &in.Owner)
+	if !requireVocab(c, "status", in.Status, models.ActivityStatuses) {
 		return
 	}
 	item, err := h.Repo.CreateActivity(c.Request.Context(), in)
@@ -472,8 +514,14 @@ func (h *API) ListTickets(c *gin.Context) {
 
 func (h *API) CreateTicket(c *gin.Context) {
 	var in store.TicketInput
-	if err := c.ShouldBindJSON(&in); err != nil || in.Subject == "" {
+	if err := bindJSONCoerced(c, &in); err != nil || in.Subject == "" {
 		badRequest(c, "subject is required")
+		return
+	}
+	stampOwner(c, &in.Owner)
+	if !requireVocab(c, "status", in.Status, models.TicketStatuses) ||
+		!requireVocab(c, "priority", in.Priority, models.TicketPriorities) ||
+		!requireVocab(c, "channel", in.Channel, models.TicketChannels) {
 		return
 	}
 	var item models.Ticket
@@ -512,6 +560,12 @@ func (h *API) PatchTicket(c *gin.Context) {
 		badRequest(c, "invalid body")
 		return
 	}
+	if !guardOwnerPatch(c, patch) ||
+		!patchVocab(c, patch, "status", models.TicketStatuses) ||
+		!patchVocab(c, patch, "priority", models.TicketPriorities) ||
+		!patchVocab(c, patch, "channel", models.TicketChannels) {
+		return
+	}
 	item, err := h.Repo.PatchTicket(c.Request.Context(), c.Param("id"), patch)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -521,6 +575,7 @@ func (h *API) PatchTicket(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "update ticket failed")
 		return
 	}
+	h.recordAudit(c, "TicketUpdated", store.AuditDetail("ticket", item.ID, "updated"))
 	c.JSON(http.StatusOK, item)
 }
 
@@ -670,6 +725,9 @@ func (h *API) PatchActivity(c *gin.Context) {
 		badRequest(c, "invalid body")
 		return
 	}
+	if !guardOwnerPatch(c, patch) || !patchVocab(c, patch, "status", models.ActivityStatuses) {
+		return
+	}
 	item, err := h.Repo.PatchActivity(c.Request.Context(), c.Param("id"), patch)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -679,6 +737,7 @@ func (h *API) PatchActivity(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "update activity failed")
 		return
 	}
+	h.recordAudit(c, "ActivityUpdated", store.AuditDetail("activity", item.ID, "updated"))
 	c.JSON(http.StatusOK, item)
 }
 

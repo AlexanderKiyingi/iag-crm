@@ -33,6 +33,149 @@ func (r *Repository) resolveAccountID(ctx context.Context, name string) (string,
 	return id, nil
 }
 
+// resolveContactID and resolveDealID are resolveAccountID for the other two
+// typed references an activity or ticket can carry. The record clients have
+// one string per field and no id picker, so a name is what arrives; an
+// unmatched name leaves the link empty rather than failing, exactly as the
+// account resolver does.
+func (r *Repository) resolveContactID(ctx context.Context, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	var id string
+	err := r.db(ctx).QueryRow(ctx, `SELECT id FROM crm_contacts WHERE name = $1 ORDER BY updated_at DESC LIMIT 1`, name).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve contact by name: %w", err)
+	}
+	return id, nil
+}
+
+func (r *Repository) resolveDealID(ctx context.Context, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	var id string
+	err := r.db(ctx).QueryRow(ctx, `SELECT id FROM crm_deals WHERE name = $1 ORDER BY updated_at DESC LIMIT 1`, name).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve deal by name: %w", err)
+	}
+	return id, nil
+}
+
+// resolveLinks fills contact_id / deal_id from their names when the ids were
+// not sent. Shared by the activity and ticket create paths.
+func (r *Repository) resolveLinks(ctx context.Context, contactID, contactName, dealID, dealName string) (string, string, error) {
+	var err error
+	if contactID == "" && contactName != "" {
+		if contactID, err = r.resolveContactID(ctx, contactName); err != nil {
+			return "", "", err
+		}
+	}
+	if dealID == "" && dealName != "" {
+		if dealID, err = r.resolveDealID(ctx, dealName); err != nil {
+			return "", "", err
+		}
+	}
+	return contactID, dealID, nil
+}
+
+// patchLinks appends the contact/deal SET clauses for a sparse PATCH: an id
+// key is written as sent, a name key is resolved first. Returns the next
+// placeholder index.
+func (r *Repository) patchLinks(ctx context.Context, patch map[string]any, sets *[]string, args *[]any, i int) (int, error) {
+	for _, link := range []struct{ idKey, nameKey, col string; resolve func(context.Context, string) (string, error) }{
+		{"contact_id", "contact", "contact_id", r.resolveContactID},
+		{"deal_id", "deal", "deal_id", r.resolveDealID},
+	} {
+		var id string
+		var set bool
+		if v, ok := patch[link.idKey].(string); ok {
+			id, set = v, true
+		} else if v, ok := patch[link.nameKey].(string); ok {
+			resolved, err := link.resolve(ctx, v)
+			if err != nil {
+				return i, err
+			}
+			id, set = resolved, true
+		}
+		if !set {
+			continue
+		}
+		*sets = append(*sets, fmt.Sprintf("%s = $%d", link.col, i))
+		*args = append(*args, nullStr(id))
+		i++
+	}
+	return i, nil
+}
+
+// linkNames maps a set of ids in one table to their names in one query.
+func (r *Repository) linkNames(ctx context.Context, table string, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db(ctx).Query(ctx, `SELECT id::text, name FROM `+table+` WHERE id::text = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
+}
+
+// fillActivityLinks and fillTicketLinks put contact_name / deal_name on the
+// read model. Two queries per list, none per row; a failure leaves the names
+// blank rather than failing the read, because the ids are still there.
+func (r *Repository) fillActivityLinks(ctx context.Context, items []models.Activity) {
+	var contactIDs, dealIDs []string
+	for _, a := range items {
+		if a.ContactID != "" {
+			contactIDs = append(contactIDs, a.ContactID)
+		}
+		if a.DealID != "" {
+			dealIDs = append(dealIDs, a.DealID)
+		}
+	}
+	contacts, _ := r.linkNames(ctx, "crm_contacts", contactIDs)
+	deals, _ := r.linkNames(ctx, "crm_deals", dealIDs)
+	for i := range items {
+		items[i].ContactName = contacts[items[i].ContactID]
+		items[i].DealName = deals[items[i].DealID]
+	}
+}
+
+func (r *Repository) fillTicketLinks(ctx context.Context, items []models.Ticket) {
+	var contactIDs, dealIDs []string
+	for _, t := range items {
+		if t.ContactID != "" {
+			contactIDs = append(contactIDs, t.ContactID)
+		}
+		if t.DealID != "" {
+			dealIDs = append(dealIDs, t.DealID)
+		}
+	}
+	contacts, _ := r.linkNames(ctx, "crm_contacts", contactIDs)
+	deals, _ := r.linkNames(ctx, "crm_deals", dealIDs)
+	for i := range items {
+		items[i].ContactName = contacts[items[i].ContactID]
+		items[i].DealName = deals[items[i].DealID]
+	}
+}
+
 type Repository struct {
 	pool     *pgxpool.Pool
 	tokenKey []byte
@@ -363,7 +506,7 @@ func scanContact(row pgx.Row) (models.Contact, error) {
 	var attrs []byte
 	err := row.Scan(
 		&c.ID, &accountID, &c.Account, &c.Name, &c.Title, &c.Email, &c.Phone,
-		&c.BuyerRole, &c.Owner, &c.Primary, &attrs, &c.CreatedAt, &c.UpdatedAt,
+		&c.BuyerRole, &c.Owner, &c.Primary, &c.Status, &attrs, &c.CreatedAt, &c.UpdatedAt,
 	)
 	c.Attrs = decodeAttrs(attrs)
 	if err != nil {
@@ -398,7 +541,7 @@ func (r *Repository) ListContacts(ctx context.Context, opts ListOpts) ([]models.
 	}
 	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `
-		SELECT id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, attrs, created_at, updated_at
+		SELECT id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, status, attrs, created_at, updated_at
 		FROM crm_contacts WHERE `+whereSQL+` ORDER BY name LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
 		return nil, 0, err
@@ -417,7 +560,7 @@ func (r *Repository) ListContacts(ctx context.Context, opts ListOpts) ([]models.
 
 func (r *Repository) GetContact(ctx context.Context, id string) (models.Contact, error) {
 	row := r.db(ctx).QueryRow(ctx, `
-		SELECT id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, attrs, created_at, updated_at
+		SELECT id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, status, attrs, created_at, updated_at
 		FROM crm_contacts WHERE id = $1
 	`, id)
 	return scanContact(row)
@@ -433,7 +576,9 @@ type ContactInput struct {
 	Owner     string `json:"owner"`
 	BuyerRole string `json:"buyer_role"`
 	Primary   bool   `json:"primary"`
-	// Attrs carries client fields with no promoted column (notes, active flag).
+	// Status is active/inactive; blank defaults to active.
+	Status string `json:"status"`
+	// Attrs carries client fields with no promoted column (notes).
 	// See db/migrations/0008_entity_attrs.sql.
 	Attrs map[string]any `json:"attrs"`
 }
@@ -449,11 +594,14 @@ func (r *Repository) CreateContact(ctx context.Context, in ContactInput) (models
 		}
 		accountID = aid
 	}
+	if in.Status == "" {
+		in.Status = models.ContactStatusActive
+	}
 	now := time.Now().UTC()
 	_, err := r.db(ctx).Exec(ctx, `
-		INSERT INTO crm_contacts (id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, attrs, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
-	`, id, nullStr(accountID), accountName, in.Name, in.Title, in.Email, in.Phone, in.BuyerRole, in.Owner, in.Primary,
+		INSERT INTO crm_contacts (id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, status, attrs, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
+	`, id, nullStr(accountID), accountName, in.Name, in.Title, in.Email, in.Phone, in.BuyerRole, in.Owner, in.Primary, in.Status,
 		encodeAttrs(in.Attrs), now)
 	if err != nil {
 		return models.Contact{}, err
@@ -491,6 +639,7 @@ func (r *Repository) PatchContact(ctx context.Context, id string, patch map[stri
 	for _, field := range []struct{ key, col string }{
 		{"name", "name"}, {"title", "title"}, {"email", "email"}, {"phone", "phone"},
 		{"owner", "owner"}, {"buyer_role", "buyer_role"}, {"account_name", "account_name"},
+		{"status", "status"},
 		// The read model exposes this column as `account`, and PatchDeal keys the
 		// same column on `account`. A caller that used either of those here wrote
 		// nothing and got a 200 back. Both keys are accepted; account_name wins
@@ -509,8 +658,8 @@ func (r *Repository) PatchContact(ctx context.Context, id string, patch map[stri
 		}
 	}
 	if attrs, ok := patchAttrs(patch); ok {
-		sets = append(sets, fmt.Sprintf("attrs = $%d", i))
-		args = append(args, encodeAttrs(attrs))
+		sets = append(sets, attrs.SetExpr(i))
+		args = append(args, attrs.Arg())
 		i++
 	}
 	// Re-point the foreign key alongside the display name — see PatchDeal for

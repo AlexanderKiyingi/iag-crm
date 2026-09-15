@@ -166,8 +166,8 @@ func (r *Repository) PatchActivity(ctx context.Context, id string, patch map[str
 		}
 	}
 	if attrs, ok := patchAttrs(patch); ok {
-		sets = append(sets, fmt.Sprintf("attrs = $%d", i))
-		args = append(args, encodeAttrs(attrs))
+		sets = append(sets, attrs.SetExpr(i))
+		args = append(args, attrs.Arg())
 		i++
 	}
 	// The customer an activity is about was not patchable at all: CreateActivity
@@ -186,6 +186,10 @@ func (r *Repository) PatchActivity(ctx context.Context, id string, patch map[str
 		sets = append(sets, fmt.Sprintf("account_id = $%d", i))
 		args = append(args, nullStr(accountID))
 		i++
+	}
+	var err error
+	if i, err = r.patchLinks(ctx, patch, &sets, &args, i); err != nil {
+		return models.Activity{}, err
 	}
 	if len(sets) == 0 {
 		return r.GetActivity(ctx, id)
@@ -218,7 +222,13 @@ func (r *Repository) GetActivity(ctx context.Context, id string) (models.Activit
 		       outlet_ref, owner, occurred_at, due_at, status, attrs, created_at
 		FROM crm_activities WHERE id = $1
 	`, id)
-	return scanActivity(row)
+	a, err := scanActivity(row)
+	if err != nil {
+		return a, err
+	}
+	one := []models.Activity{a}
+	r.fillActivityLinks(ctx, one)
+	return one[0], nil
 }
 
 func stringsJoin(parts []string, sep string) string {

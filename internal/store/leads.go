@@ -181,7 +181,9 @@ func (r *Repository) PatchLead(ctx context.Context, id string, patch map[string]
 		add("estimated_value", parsePatchNumber(v))
 	}
 	if attrs, ok := patchAttrs(patch); ok {
-		add("attrs", encodeAttrs(attrs))
+		sets = append(sets, attrs.SetExpr(i))
+		args = append(args, attrs.Arg())
+		i++
 	}
 	// Re-point the foreign key when the customer name changes. Writing
 	// account_name alone leaves account_id on the previous account, so the screen

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"strconv"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -637,9 +638,25 @@ func (h *API) GetSEOAuditJob(c *gin.Context) {
 	c.JSON(http.StatusOK, job)
 }
 
+// GetDealForecast is a window, not the overview again. It used to return
+// PipelineSummary under a second key — the same five numbers — so any client
+// showing both presented one calculation twice and called one a forecast.
+// `expected` is the probability-weighted value of open deals closing within
+// ?days (default 90); `committed` is the unweighted value of those already at
+// proposal or negotiation.
 func (h *API) GetDealForecast(c *gin.Context) {
+	days, _ := strconv.Atoi(c.DefaultQuery("days", "90"))
+	if days <= 0 || days > 365 {
+		days = 90
+	}
+	forecast, err := h.Repo.DealForecast(c.Request.Context(), days)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "forecast failed")
+		return
+	}
 	summary, _ := h.Repo.PipelineSummary(c.Request.Context())
-	c.JSON(http.StatusOK, gin.H{"quarter": c.DefaultQuery("quarter", "Q2"), "summary": summary})
+	forecast["summary"] = summary
+	c.JSON(http.StatusOK, forecast)
 }
 
 func (h *API) GetAccount360(c *gin.Context) {
