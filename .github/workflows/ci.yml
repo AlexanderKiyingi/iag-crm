@@ -31,13 +31,12 @@ jobs:
         with:
           go-version: "1.25"
 
-      - name: Fetch platform-go from meta-repo
-        run: |
-          git clone --depth 1 --branch main https://github.com/AlexanderKiyingi/IAG_multi_backend.git /tmp/iag-meta
-          mkdir -p /tmp/deps
-          mv /tmp/iag-meta/shared/platform-go /tmp/deps/platform-go
-          rm -rf /tmp/iag-meta
-          go mod edit -replace=github.com/alvor-technologies/iag-platform-go=/tmp/deps/platform-go
+      # The meta-repo is private and the runner has no credential for it, so
+      # the clone died before go build on every run. The Dockerfile already
+      # builds from the vendored snapshot at third_party/platform-go (kept
+      # fresh by scripts/sync-platform-go.sh); CI builds the same way.
+      - name: Use vendored platform-go
+        run: go mod edit -replace=github.com/alvor-technologies/iag-platform-go=./third_party/platform-go
 
       - name: go mod tidy
         run: go mod tidy
