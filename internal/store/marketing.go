@@ -131,7 +131,10 @@ func (r *Repository) CreateSegment(ctx context.Context, in map[string]any) (map[
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": id, "name": str(in, "name")}, nil
+	// Echo the stored row, not just its id: a client that renders the create
+	// response (the CRM app does) showed blank kind/refresh/rules until the
+	// next list read.
+	return r.GetGenericRow(ctx, "crm_segments", "name, kind, refresh, rules, member_count", id)
 }
 
 func (r *Repository) ListJourneys(ctx context.Context, opts ListOpts) ([]map[string]any, int, error) {
