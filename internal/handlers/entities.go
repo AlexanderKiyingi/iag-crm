@@ -46,6 +46,10 @@ func (h *API) CreateAccount(c *gin.Context) {
 		badRequest(c, "name is required")
 		return
 	}
+	// Accounts, quotes and campaigns are owner-scoped on read like every
+	// other table here, but their creates never stamped the caller — a rep
+	// who left Owner blank (the form says to) made a row they could not see.
+	stampOwner(c, &in.Owner)
 	var item models.Account
 	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
 		var e error
@@ -419,6 +423,7 @@ func (h *API) CreateQuote(c *gin.Context) {
 		badRequest(c, "total is required")
 		return
 	}
+	stampOwner(c, &in.Owner)
 	item, err := h.Repo.CreateQuote(c.Request.Context(), in)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create quote failed")
@@ -612,6 +617,7 @@ func (h *API) CreateCampaign(c *gin.Context) {
 		badRequest(c, "name is required")
 		return
 	}
+	stampOwner(c, &in.Owner)
 	var item models.Campaign
 	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
 		var e error
