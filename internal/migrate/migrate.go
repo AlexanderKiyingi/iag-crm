@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,6 +25,11 @@ CREATE TABLE IF NOT EXISTS crm.schema_migrations (
     checksum   TEXT NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`
+
+// migrateLockSQL serialises migration runs across replicas. It is
+// transaction-scoped, so it works through pgbouncer's transaction pooling and
+// releases itself on commit or rollback.
+const migrateLockSQL = `SELECT pg_advisory_xact_lock(hashtext('crm.schema_migrations'))`
 
 type Migration struct {
 	Version string
@@ -55,11 +61,8 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 		return nil, err
 	}
 
-	if _, err := pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS crm`); err != nil {
-		return nil, fmt.Errorf("create schema crm: %w", err)
-	}
-	if _, err := pool.Exec(ctx, schemaMigrationsDDL); err != nil {
-		return nil, fmt.Errorf("create schema_migrations: %w", err)
+	if err := bootstrap(ctx, pool); err != nil {
+		return nil, err
 	}
 
 	// One-time cutover from the shared global public.schema_migrations: stamp this
@@ -99,8 +102,12 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 		prev, ok := applied[m.Version]
 		switch {
 		case !ok:
-			if err := apply(ctx, pool, m); err != nil {
+			ran, err := apply(ctx, pool, m)
+			if err != nil {
 				return newlyApplied, fmt.Errorf("migration %s: %w", m.Version, err)
+			}
+			if !ran {
+				continue
 			}
 			newlyApplied = append(newlyApplied, m.Version)
 			slog.Info("migration applied", "version", m.Version)
@@ -147,7 +154,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 					"file", m.Checksum,
 				)
 			}
-			if err := reapply(ctx, pool, m); err != nil {
+			if err := reapply(ctx, pool, m, prev.Checksum); err != nil {
 				return newlyApplied, fmt.Errorf(
 					"migration %s re-apply (stored checksum %s, file %s; the body must be "+
 						"safe to run twice): %w", m.Version, prev.Checksum, m.Checksum, err,
@@ -156,6 +163,64 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 		}
 	}
 	return newlyApplied, nil
+}
+
+// bootstrap creates the schema and the ledger. CREATE … IF NOT EXISTS is not
+// safe against a concurrent CREATE of the same name (both pass the check, one
+// hits a unique violation), so it runs under the same lock as the migrations.
+func bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, migrateLockSQL); err != nil {
+		return fmt.Errorf("migration bootstrap lock: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS crm`); err != nil {
+		return fmt.Errorf("create schema crm: %w", err)
+	}
+	if _, err := tx.Exec(ctx, schemaMigrationsDDL); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// lockAndReadChecksum takes the migration lock inside tx and returns the
+// ledger's current checksum for the version, or ok=false when it is not
+// recorded. Replicas starting together all decide from the same stale read of
+// the ledger; whoever waited on the lock reads it again here and skips work the
+// winner has already done.
+func lockAndReadChecksum(ctx context.Context, tx pgx.Tx, version string) (stored string, ok bool, err error) {
+	if _, err := tx.Exec(ctx, migrateLockSQL); err != nil {
+		return "", false, fmt.Errorf("lock: %w", err)
+	}
+	err = tx.QueryRow(ctx,
+		`SELECT checksum FROM crm.schema_migrations WHERE version = $1`, version).Scan(&stored)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return stored, true, nil
+}
+
+// unwrapTx strips the BEGIN; … COMMIT; that 0001–0005 wrap themselves in. Run
+// inside the runner's transaction, that COMMIT ends it early: it commits the
+// body on its own, releases the migration lock while the ledger row is still
+// unwritten, and leaves the ledger insert to autocommit. A replica waiting on
+// the lock then sees the version as pending and runs it again. The checksum is
+// still taken over the file as shipped.
+func unwrapTx(body string) string {
+	s := strings.TrimSpace(body)
+	if len(s) >= len("BEGIN;")+len("COMMIT;") &&
+		strings.EqualFold(s[:len("BEGIN;")], "BEGIN;") &&
+		strings.EqualFold(s[len(s)-len("COMMIT;"):], "COMMIT;") {
+		return s[len("BEGIN;") : len(s)-len("COMMIT;")]
+	}
+	return body
 }
 
 // baseTableExists reports whether the schema's anchor table (crm_accounts,
@@ -279,25 +344,27 @@ func loadApplied(ctx context.Context, pool *pgxpool.Pool) (map[string]appliedRow
 	return out, rows.Err()
 }
 
-func apply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
+// apply runs a migration the ledger does not record. ran is false when another
+// replica applied it while this one waited for the lock.
+func apply(ctx context.Context, pool *pgxpool.Pool, m Migration) (ran bool, err error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, m.Body); err != nil {
-		return err
+	if _, recorded, err := lockAndReadChecksum(ctx, tx, m.Version); err != nil || recorded {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, unwrapTx(m.Body)); err != nil {
+		return false, err
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO crm.schema_migrations (version, checksum) VALUES ($1, $2)`,
 		m.Version, m.Checksum); err != nil {
-		if strings.Contains(err.Error(), "23505") {
-			return errors.New("concurrent migration: version already applied by another process")
-		}
-		return err
+		return false, err
 	}
-	return tx.Commit(ctx)
+	return true, tx.Commit(ctx)
 }
 
 // restamp adopts the canonical checksum for a migration whose recorded body is
@@ -314,14 +381,21 @@ func restamp(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
 // matches the shipped file, then re-stamps the checksum. Safe only because every
 // migration body is idempotent; running it against a DB that already has the
 // objects is a no-op, while a legacy DB missing them is brought up to date.
-func reapply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
+//
+// seen is the checksum Up read before deciding. If the row no longer holds it,
+// another replica re-applied the body while this one waited, and there is
+// nothing left to do.
+func reapply(ctx context.Context, pool *pgxpool.Pool, m Migration, seen string) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, m.Body); err != nil {
+	if stored, recorded, err := lockAndReadChecksum(ctx, tx, m.Version); err != nil || !recorded || stored != seen {
+		return err
+	}
+	if _, err := tx.Exec(ctx, unwrapTx(m.Body)); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx,

@@ -41,3 +41,17 @@ func TestChecksumAcceptsEitherLineEnding(t *testing.T) {
 		})
 	}
 }
+
+func TestUnwrapTx(t *testing.T) {
+	cases := map[string]string{
+		"BEGIN;\n\nCREATE TABLE a (id int);\n\nCOMMIT;\n": "\n\nCREATE TABLE a (id int);\n\n",
+		"begin;\nSELECT 1;\ncommit;":                      "\nSELECT 1;\n",
+		"CREATE TABLE a (id int);\n":                      "CREATE TABLE a (id int);\n",
+		"BEGIN;\nSELECT 1;\n":                             "BEGIN;\nSELECT 1;\n",
+	}
+	for in, want := range cases {
+		if got := unwrapTx(in); got != want {
+			t.Errorf("unwrapTx(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
