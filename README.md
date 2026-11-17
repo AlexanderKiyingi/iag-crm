@@ -82,7 +82,7 @@ Compose (`deploy/docker-compose.yml`) uses the same Dockerfile. Gateway waits fo
 - `JOURNEY_RUNNER_INTERVAL=30s` for journey step execution
 - `GOOGLE_OAUTH_*` / `MICROSOFT_OAUTH_*` for email + calendar sync
 - Explicit `ALLOWED_ORIGINS` (not `*`)
-- Migrations apply on boot into `crm.schema_migrations` (full filename versions). Redeploy / restart CRM so `0015_territories_assignment` and `0015_campaign_status_vocab` land beside earlier `0014_*` / `0013_*` rows.
+- Migrations apply on boot into `crm.schema_migrations` (full filename versions). Redeploy / restart CRM so `0017_account_required_contacts_quotes_tickets` (and prior `0015_*` / `0016_*`) land; contacts/quotes/tickets require `account_id` with `ON DELETE RESTRICT`.
 - See [`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md) and [`config/.env.production.example`](config/.env.production.example)
 
 ### Smoke test
