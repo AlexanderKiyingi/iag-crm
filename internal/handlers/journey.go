@@ -48,17 +48,22 @@ func (h *API) EnrollJourney(c *gin.Context) {
 		badRequest(c, "invalid body")
 		return
 	}
-	// Resolve mailbox-style enrollments: email alone is enough when a matching
-	// contact or lead already exists in CRM.
-	if in.ContactID == "" && in.LeadID == "" && strings.TrimSpace(in.SubjectEmail) != "" {
+	in.SubjectEmail = strings.TrimSpace(in.SubjectEmail)
+	in.SubjectName = strings.TrimSpace(in.SubjectName)
+	if in.SubjectName == "" {
+		in.SubjectName = in.SubjectEmail
+	}
+	// Prefer linking to an existing contact/lead when the mailbox matches; email
+	// alone is still enough to enroll (contact_id / lead_id stay nullable).
+	if in.ContactID == "" && in.LeadID == "" && in.SubjectEmail != "" {
 		if contactID, _, _, err := h.Repo.FindContactByEmail(c.Request.Context(), in.SubjectEmail); err == nil && contactID != "" {
 			in.ContactID = contactID
 		} else if leadID, err := h.Repo.FindLeadByEmail(c.Request.Context(), in.SubjectEmail); err == nil && leadID != "" {
 			in.LeadID = leadID
 		}
 	}
-	if in.ContactID == "" && in.LeadID == "" {
-		badRequest(c, "contact_id, lead_id, or a matching subject_email is required")
+	if in.ContactID == "" && in.LeadID == "" && in.SubjectEmail == "" {
+		badRequest(c, "contact_id, lead_id, or subject_email is required")
 		return
 	}
 	var item store.JourneyEnrollment

@@ -6,7 +6,7 @@ Use this before enabling CRM in staging/production.
 
 | Item | Env / setting | Verify |
 |------|----------------|--------|
-| Database | `DATABASE_URL` migrated through `0005_journey_integrations` | `GET /ready` returns `database: true` |
+| Database | `DATABASE_URL`; boot runs embedded migrations through `0015_territories_assignment` (and sibling `0015_campaign_status_vocab`) | `GET /ready` returns `database: true`; `/admin/schema` (or health) lists both `0015_*` versions |
 | Auth | `JWT_ISSUER`, `JWKS_URL`, `AUDIENCE=iag.crm` | Mutating API returns 401 without Bearer |
 | Service account | `SERVICE_CLIENT_SECRET` (≥16 chars) | Startup log: permissions registered |
 | Strict RBAC | `ENVIRONMENT=production` | Tokens without `permissions` are denied |
@@ -52,7 +52,10 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 |------|-------------|--------|
 | Journey runner | `JOURNEY_RUNNER_INTERVAL=30s` | New contact auto-enrolls JRN-001; enrollments advance |
 | Journey API | `POST /v1/journeys/:id/enroll` | Enrollment row + `crm.journey.enrolled` event |
-| Google OAuth | `GOOGLE_OAUTH_*` + redirect URL | `GET /v1/integrations/oauth/google/start` returns `authorize_url` |
+| Google OAuth | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, redirect (`GOOGLE_OAUTH_REDIRECT_URL` or `PUBLIC_API_URL` default) | `GET /v1/integrations/status` lists `google`; start returns `authorize_url` |
+| Microsoft OAuth | `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, redirect | `GET /v1/integrations/status` lists `microsoft` |
+| Lead scoring AI | Platform AI client enabled on CRM | `POST /v1/leads/:id/score` returns `score_method: "ai"`; otherwise `"heuristic"` |
+| Activity SSE | — | `GET /v1/activities/stream?account_id=` (desk proxies `/api/crm/activities/stream`) |
 | OAuth state signing | `SERVICE_CLIENT_SECRET` or `INTEGRATION_TOKEN_SECRET` (≥16 chars) | Callback rejects unsigned/expired state in production |
 | Integration tokens | `INTEGRATION_TOKEN_SECRET` (defaults to service secret) | OAuth tokens stored AES-GCM sealed (`enc1:` prefix) in Postgres |
 | Calendar sync | Connected Google/Microsoft | `POST /v1/integrations/calendar/sync` imports activities |

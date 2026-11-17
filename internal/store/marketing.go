@@ -23,6 +23,8 @@ func (r *Repository) Lookups(ctx context.Context, kind string) ([]LookupItem, er
 		return r.lookupQuery(ctx, `SELECT id, name, COALESCE(account_name,'') FROM crm_contacts WHERE status <> 'inactive' ORDER BY name LIMIT 200`)
 	case "deals":
 		return r.lookupQuery(ctx, `SELECT id, name, COALESCE(account_name,'') FROM crm_deals ORDER BY updated_at DESC LIMIT 200`)
+	case "leads":
+		return r.lookupQuery(ctx, `SELECT id, name, COALESCE(company,'') FROM crm_leads ORDER BY updated_at DESC LIMIT 200`)
 	case "segments":
 		return r.lookupQuery(ctx, `SELECT id, name, '' FROM crm_segments ORDER BY name LIMIT 200`)
 	case "campaigns":
@@ -37,6 +39,47 @@ func (r *Repository) Lookups(ctx context.Context, kind string) ([]LookupItem, er
 		return r.lookupQuery(ctx, `SELECT id, name, COALESCE(dms_ref,'') FROM crm_outlets ORDER BY name LIMIT 200`)
 	case "contentLib":
 		return r.lookupQuery(ctx, `SELECT id, name, COALESCE(asset_type,'') FROM crm_content_assets ORDER BY name LIMIT 200`)
+	case "territories":
+		// Label is the region string leads/rules match on; Extra keeps the territory name.
+		return r.lookupQuery(ctx, `
+			SELECT id,
+			       CASE WHEN TRIM(region) <> '' THEN region ELSE name END,
+			       name
+			FROM crm_territories
+			ORDER BY name
+			LIMIT 200`)
+	case "lead_sources":
+		return r.lookupQuery(ctx, `
+			SELECT DISTINCT ON (LOWER(TRIM(source)))
+			       TRIM(source), TRIM(source), ''
+			FROM crm_leads
+			WHERE TRIM(COALESCE(source, '')) <> ''
+			ORDER BY LOWER(TRIM(source)), updated_at DESC
+			LIMIT 100`)
+	case "quote_templates":
+		return r.lookupQuery(ctx, `
+			SELECT DISTINCT ON (LOWER(TRIM(template)))
+			       TRIM(template), TRIM(template), ''
+			FROM crm_quotes
+			WHERE TRIM(COALESCE(template, '')) <> ''
+			ORDER BY LOWER(TRIM(template)), updated_at DESC
+			LIMIT 100`)
+	case "incoterms":
+		return r.lookupQuery(ctx, `
+			SELECT DISTINCT ON (LOWER(TRIM(incoterms)))
+			       TRIM(incoterms), TRIM(incoterms), ''
+			FROM crm_quotes
+			WHERE TRIM(COALESCE(incoterms, '')) <> ''
+			ORDER BY LOWER(TRIM(incoterms)), updated_at DESC
+			LIMIT 50`)
+	case "payment_terms":
+		return r.lookupQuery(ctx, `
+			SELECT DISTINCT ON (LOWER(TRIM(payment_terms)))
+			       TRIM(payment_terms), TRIM(payment_terms), ''
+			FROM crm_quotes
+			WHERE TRIM(COALESCE(payment_terms, '')) <> ''
+			ORDER BY LOWER(TRIM(payment_terms)), updated_at DESC
+			LIMIT 50`)
 	default:
 		return nil, fmt.Errorf("unknown lookup kind: %s", kind)
 	}

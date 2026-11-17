@@ -135,6 +135,20 @@ func (h *API) ScoreLead(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "score lead failed")
 		return
 	}
-	h.recordAudit(c, "LeadScored", store.AuditDetail("lead", item.ID, "score="+strconv.Itoa(item.Score)))
-	c.JSON(http.StatusOK, item)
+	method := "heuristic"
+	if usedAI {
+		method = "ai"
+	}
+	h.recordAudit(c, "LeadScored", store.AuditDetail("lead", item.ID, "score="+strconv.Itoa(item.Score)+";method="+method))
+	c.JSON(http.StatusOK, gin.H{
+		"id":           item.ID,
+		"score":        item.Score,
+		"score_method": method,
+		"name":         item.Name,
+		"company":      item.Company,
+		"email":        item.Email,
+		"status":       item.Status,
+		"owner":        item.Owner,
+		"updated_at":   item.UpdatedAt,
+	})
 }
