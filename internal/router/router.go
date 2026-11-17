@@ -83,6 +83,11 @@ func registerDashboardRoutes(v1 *gin.RouterGroup, api *handlers.API) {
 	v1.GET("/overview", auth.RequirePerm("accounts.read"), api.Overview)
 	v1.GET("/pipeline/board", auth.RequirePerm("deals.read"), api.PipelineBoard)
 	v1.GET("/deals/forecast", auth.RequirePerm("deals.read"), api.GetDealForecast)
+	v1.GET("/sales-targets/progress", auth.RequirePerm("deals.read"), api.GetSalesTargetProgress)
+	v1.GET("/sales-targets", auth.RequirePerm("deals.read"), api.ListSalesTargets)
+	v1.POST("/sales-targets", auth.RequirePerm("deals.update"), api.CreateSalesTarget)
+	v1.PATCH("/sales-targets/:id", auth.RequirePerm("deals.update"), api.PatchSalesTarget)
+	v1.DELETE("/sales-targets/:id", auth.RequirePerm("deals.update"), api.DeleteSalesTarget)
 }
 
 // registerExternalRoutes surfaces read-only data owned by other services:
