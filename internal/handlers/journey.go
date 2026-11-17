@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -47,8 +48,17 @@ func (h *API) EnrollJourney(c *gin.Context) {
 		badRequest(c, "invalid body")
 		return
 	}
+	// Resolve mailbox-style enrollments: email alone is enough when a matching
+	// contact or lead already exists in CRM.
+	if in.ContactID == "" && in.LeadID == "" && strings.TrimSpace(in.SubjectEmail) != "" {
+		if contactID, _, _, err := h.Repo.FindContactByEmail(c.Request.Context(), in.SubjectEmail); err == nil && contactID != "" {
+			in.ContactID = contactID
+		} else if leadID, err := h.Repo.FindLeadByEmail(c.Request.Context(), in.SubjectEmail); err == nil && leadID != "" {
+			in.LeadID = leadID
+		}
+	}
 	if in.ContactID == "" && in.LeadID == "" {
-		badRequest(c, "contact_id or lead_id required")
+		badRequest(c, "contact_id, lead_id, or a matching subject_email is required")
 		return
 	}
 	var item store.JourneyEnrollment

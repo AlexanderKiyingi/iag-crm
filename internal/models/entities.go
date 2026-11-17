@@ -42,6 +42,9 @@ type Account struct {
 	Email              string    `json:"email,omitempty"`
 	Phone              string    `json:"phone,omitempty"`
 	Address            string    `json:"address,omitempty"`
+	// Outlet / site coordinates for the CRM customer form (migration 0014).
+	Latitude           *float64  `json:"latitude,omitempty"`
+	Longitude          *float64  `json:"longitude,omitempty"`
 	DmsRef             string    `json:"dms_ref,omitempty"`
 	BillingOrgID       string    `json:"billing_org_id,omitempty"`
 	BillingIdentityID  string    `json:"billing_identity_id,omitempty"`
@@ -131,10 +134,24 @@ type Deal struct {
 }
 
 type QuoteLineItem struct {
-	LotRef   string  `json:"lot_ref"`
-	Quantity int     `json:"quantity"`
-	Unit     string  `json:"unit,omitempty"`
-	Price    float64 `json:"price,omitempty"`
+	Description string  `json:"description,omitempty"`
+	LotRef      string  `json:"lot_ref,omitempty"`
+	Quantity    int     `json:"quantity"`
+	Unit        string  `json:"unit,omitempty"`
+	Price       float64 `json:"price,omitempty"`
+}
+
+// QuoteLinesTotal sums quantity × price across line items.
+func QuoteLinesTotal(items []QuoteLineItem) float64 {
+	var sum float64
+	for _, it := range items {
+		qty := it.Quantity
+		if qty <= 0 {
+			qty = 1
+		}
+		sum += float64(qty) * it.Price
+	}
+	return sum
 }
 
 type Quote struct {

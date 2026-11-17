@@ -139,3 +139,18 @@ func (r *Repository) TouchContactByEmail(ctx context.Context, email string) erro
 	`, email)
 	return err
 }
+
+// FindContactByEmail returns contact + account ids for mailbox sync linking.
+func (r *Repository) FindContactByEmail(ctx context.Context, email string) (contactID, accountID, accountName string, err error) {
+	err = r.db(ctx).QueryRow(ctx, `
+		SELECT id, COALESCE(account_id, ''), COALESCE(account_name, '')
+		FROM crm_contacts
+		WHERE LOWER(email) = LOWER($1)
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`, email).Scan(&contactID, &accountID, &accountName)
+	if err != nil {
+		return "", "", "", err
+	}
+	return contactID, accountID, accountName, nil
+}

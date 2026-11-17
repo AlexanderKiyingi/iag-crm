@@ -14,7 +14,7 @@ type RoleSpec struct {
 var PageTitles = map[string]string{
 	"overview": "Customer Tower", "pipeline": "Sales Pipeline", "accounts": "Account Directory",
 	"contacts": "Contact Directory", "leads": "Leads", "deals": "Deals & Forecast",
-	"quotes": "Quotes & Contracts", "activities": "Activities & Tasks", "campaigns": "Campaigns",
+	"quotes": "Quotations & Contracts", "activities": "Activities & Tasks", "campaigns": "Campaigns",
 	"loyalty": "Outlet Loyalty · Pearl Club", "tickets": "Service Tickets",
 	"bridge": "DMS ⇆ CRM Sync", "outlet360": "Outlet 360°", "export360": "Export Customers",
 	"insights": "Customer Insights", "ai": "AI Sales Copilot",

@@ -94,6 +94,21 @@ func (r *Repository) GetLead(ctx context.Context, id string) (models.Lead, error
 	return scanLead(row)
 }
 
+// FindLeadByEmail returns the newest lead id for mailbox / journey enrollment.
+func (r *Repository) FindLeadByEmail(ctx context.Context, email string) (string, error) {
+	var id string
+	err := r.db(ctx).QueryRow(ctx, `
+		SELECT id FROM crm_leads
+		WHERE LOWER(email) = LOWER($1)
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`, email).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 type LeadInput struct {
 	Name    string `json:"name"`
 	Company string `json:"company"`

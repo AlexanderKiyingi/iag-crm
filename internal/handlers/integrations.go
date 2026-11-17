@@ -100,7 +100,17 @@ func (h *API) syncIntegration(c *gin.Context, kind string) {
 		apierr.Unauthorized(c, "authentication required")
 		return
 	}
-	provider := strings.ToLower(c.DefaultQuery("provider", "google"))
+	provider := strings.ToLower(c.DefaultQuery("provider", ""))
+	if provider == "" {
+		var body struct {
+			Provider string `json:"provider"`
+		}
+		_ = c.ShouldBindJSON(&body)
+		provider = strings.ToLower(strings.TrimSpace(body.Provider))
+	}
+	if provider == "" {
+		provider = "google"
+	}
 	var (
 		res integrations.SyncResult
 		err error

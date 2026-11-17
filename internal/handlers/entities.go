@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/iag/crm/backend/internal/auth"
 	"github.com/iag/crm/backend/internal/events"
 	"github.com/iag/crm/backend/internal/journey"
 	"github.com/iag/crm/backend/internal/models"
@@ -212,6 +214,12 @@ func (h *API) CreateLead(c *gin.Context) {
 	if err := bindJSONCoerced(c, &in); err != nil || in.Name == "" || in.Email == "" {
 		badRequest(c, "name and email are required")
 		return
+	}
+	// Assignment rules / territories win over "stamp me as owner" when blank.
+	if strings.TrimSpace(in.Owner) == "" {
+		if matched, err := h.Repo.MatchAssignmentOwner(c.Request.Context(), in.Region, in.Segment, in.Score); err == nil && matched != "" {
+			in.Owner = matched
+		}
 	}
 	stampOwner(c, &in.Owner)
 	if !requireVocab(c, "status", in.Status, models.LeadStatuses) ||
@@ -419,8 +427,15 @@ func (h *API) ListQuotes(c *gin.Context) {
 
 func (h *API) CreateQuote(c *gin.Context) {
 	var in store.QuoteInput
-	if err := bindJSONCoerced(c, &in); err != nil || in.Total == 0 {
-		badRequest(c, "total is required")
+	if err := bindJSONCoerced(c, &in); err != nil {
+		badRequest(c, "invalid body")
+		return
+	}
+	if len(in.LineItems) > 0 {
+		in.Total = models.QuoteLinesTotal(in.LineItems)
+	}
+	if in.Total == 0 {
+		badRequest(c, "total is required (or provide line_items)")
 		return
 	}
 	stampOwner(c, &in.Owner)
@@ -618,20 +633,12 @@ func (h *API) CreateCampaign(c *gin.Context) {
 		return
 	}
 	stampOwner(c, &in.Owner)
-	var item models.Campaign
-	if err := h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
-		var e error
-		item, e = h.Repo.CreateCampaign(ctx, in)
-		if e != nil {
-			return e
+	item, err := h.Repo.CreateCampaign(c.Request.Context(), in)
+	if err != nil {
+		if errors.Is(err, store.ErrInvalidInput) {
+			badRequest(c, err.Error())
+			return
 		}
-		if h.Events != nil {
-			return h.Events.EnqueueCommercial(ctx, events.TypeCampaignLaunched, map[string]any{
-				"campaign_id": item.ID, "name": item.Name,
-			}, item.ID)
-		}
-		return nil
-	}); err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create campaign failed")
 		return
 	}
@@ -657,14 +664,41 @@ func (h *API) PatchCampaign(c *gin.Context) {
 		badRequest(c, "invalid body")
 		return
 	}
+	if raw, ok := patch["status"].(string); ok {
+		next := models.NormalizeCampaignStatus(raw)
+		if next == models.CampaignStatusApproved {
+			if !auth.HasPerm(c, "campaigns.approve") && !auth.HasPerm(c, "admin.update") {
+				apierr.JSONStatus(c, http.StatusForbidden, "CEO approval required to approve campaigns")
+				return
+			}
+		}
+	}
+	before, _ := h.Repo.GetCampaign(c.Request.Context(), c.Param("id"))
 	item, err := h.Repo.PatchCampaign(c.Request.Context(), c.Param("id"), patch)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound(c)
 			return
 		}
+		if errors.Is(err, store.ErrInvalidInput) {
+			badRequest(c, err.Error())
+			return
+		}
+		if errors.Is(err, store.ErrConflict) {
+			apierr.JSONStatus(c, http.StatusConflict, err.Error())
+			return
+		}
 		apierr.JSONStatus(c, http.StatusInternalServerError, "update campaign failed")
 		return
+	}
+	if h.Events != nil &&
+		models.NormalizeCampaignStatus(before.Status) != models.CampaignStatusLive &&
+		models.NormalizeCampaignStatus(item.Status) == models.CampaignStatusLive {
+		_ = h.Repo.WithinTx(c.Request.Context(), func(ctx context.Context) error {
+			return h.Events.EnqueueCommercial(ctx, events.TypeCampaignLaunched, map[string]any{
+				"campaign_id": item.ID, "name": item.Name,
+			}, item.ID)
+		})
 	}
 	h.recordAudit(c, "CampaignUpdated", store.AuditDetail("campaign", item.ID, "updated"))
 	c.JSON(http.StatusOK, item)

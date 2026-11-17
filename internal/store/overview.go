@@ -16,7 +16,7 @@ func BootstrapPayload() models.Bootstrap {
 		PageTitles: map[string]string{
 			"overview": "Customer Tower", "pipeline": "Sales Pipeline", "accounts": "Account Directory",
 			"contacts": "Contact Directory", "leads": "Leads", "deals": "Deals & Forecast",
-			"quotes": "Quotes & Contracts", "activities": "Activities & Tasks", "campaigns": "Campaigns",
+			"quotes": "Quotations & Contracts", "activities": "Activities & Tasks", "campaigns": "Campaigns",
 		},
 		SyncStatus: "connected",
 	}
