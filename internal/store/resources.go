@@ -116,6 +116,9 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 		}
 		dealID = resolved
 	}
+	if len(in.LineItems) > 0 {
+		in.Total = models.QuoteLinesTotal(in.LineItems)
+	}
 	lineRaw, _ := json.Marshal(in.LineItems)
 	now := time.Now().UTC()
 	_, err := r.db(ctx).Exec(ctx, `
@@ -151,10 +154,23 @@ func (r *Repository) PatchQuote(ctx context.Context, id string, patch map[string
 	for _, field := range []struct{ key, col string }{
 		{"status", "status"}, {"total", "total"}, {"currency", "currency"},
 		{"incoterms", "incoterms"}, {"payment_terms", "payment_terms"}, {"owner", "owner"},
+		{"template", "template"}, {"ref", "ref"},
 	} {
 		if v, ok := patch[field.key]; ok {
 			sets = append(sets, fmt.Sprintf("%s = $%d", field.col, i))
 			args = append(args, v)
+			i++
+		}
+	}
+	if raw, ok := patch["line_items"]; ok {
+		items := normalizeQuoteLines(raw)
+		lineRaw, _ := json.Marshal(items)
+		sets = append(sets, fmt.Sprintf("line_items = $%d", i))
+		args = append(args, lineRaw)
+		i++
+		if _, hasTotal := patch["total"]; !hasTotal && len(items) > 0 {
+			sets = append(sets, fmt.Sprintf("total = $%d", i))
+			args = append(args, models.QuoteLinesTotal(items))
 			i++
 		}
 	}
@@ -171,6 +187,53 @@ func (r *Repository) PatchQuote(ctx context.Context, id string, patch map[string
 		return models.Quote{}, pgx.ErrNoRows
 	}
 	return r.GetQuote(ctx, id)
+}
+
+func normalizeQuoteLines(raw any) []models.QuoteLineItem {
+	switch v := raw.(type) {
+	case []models.QuoteLineItem:
+		return v
+	case []any:
+		out := make([]models.QuoteLineItem, 0, len(v))
+		for _, row := range v {
+			m, ok := row.(map[string]any)
+			if !ok {
+				continue
+			}
+			item := models.QuoteLineItem{
+				Description: fmt.Sprint(m["description"]),
+				LotRef:      fmt.Sprint(m["lot_ref"]),
+				Unit:        fmt.Sprint(m["unit"]),
+			}
+			switch q := m["quantity"].(type) {
+			case float64:
+				item.Quantity = int(q)
+			case int:
+				item.Quantity = q
+			case json.Number:
+				n, _ := q.Int64()
+				item.Quantity = int(n)
+			}
+			switch p := m["price"].(type) {
+			case float64:
+				item.Price = p
+			case int:
+				item.Price = float64(p)
+			case json.Number:
+				item.Price, _ = p.Float64()
+			}
+			out = append(out, item)
+		}
+		return out
+	default:
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil
+		}
+		var out []models.QuoteLineItem
+		_ = json.Unmarshal(b, &out)
+		return out
+	}
 }
 
 func scanActivity(row pgx.Row) (models.Activity, error) {
@@ -219,6 +282,26 @@ func (r *Repository) ListActivities(ctx context.Context, opts ListOpts) ([]model
 	// visit), and hiding those would make the rep's own 360 lie to them. So a
 	// scoped caller sees what they own OR what is on an account they own.
 	where, args = applyActivityScope(opts, where, args, &i)
+	if opts.AccountID != "" {
+		where = append(where, fmt.Sprintf("account_id = $%d", i))
+		args = append(args, opts.AccountID)
+		i++
+	}
+	if opts.DealID != "" {
+		where = append(where, fmt.Sprintf("deal_id = $%d", i))
+		args = append(args, opts.DealID)
+		i++
+	}
+	if opts.ContactID != "" {
+		where = append(where, fmt.Sprintf("contact_id = $%d", i))
+		args = append(args, opts.ContactID)
+		i++
+	}
+	if opts.LeadID != "" {
+		where = append(where, fmt.Sprintf("attrs->>'lead_id' = $%d", i))
+		args = append(args, opts.LeadID)
+		i++
+	}
 	if len(types) > 0 {
 		where = append(where, fmt.Sprintf("activity_type = ANY($%d)", i))
 		args = append(args, types)
@@ -645,6 +728,10 @@ func (r *Repository) GetCampaign(ctx context.Context, id string) (models.Campaig
 }
 
 func (r *Repository) PatchCampaign(ctx context.Context, id string, patch map[string]any) (models.Campaign, error) {
+	cur, err := r.GetCampaign(ctx, id)
+	if err != nil {
+		return models.Campaign{}, err
+	}
 	sets := []string{"updated_at = NOW()"}
 	args := []any{}
 	i := 1
@@ -655,20 +742,31 @@ func (r *Repository) PatchCampaign(ctx context.Context, id string, patch map[str
 	}
 	for k, col := range map[string]string{
 		"name": "name", "type": "campaign_type", "audience": "audience",
-		"status": "status", "owner": "owner", "goal": "goal",
+		"owner": "owner", "goal": "goal",
 	} {
 		if v, ok := patch[k].(string); ok {
 			add(col, v)
 		}
 	}
+	if raw, ok := patch["status"].(string); ok {
+		next := models.NormalizeCampaignStatus(raw)
+		if !models.InVocab(next, models.CampaignStatuses) {
+			return models.Campaign{}, fmt.Errorf("%w: invalid campaign status %q", ErrInvalidInput, raw)
+		}
+		from := models.NormalizeCampaignStatus(cur.Status)
+		if !models.CanTransitionCampaign(from, next) {
+			return models.Campaign{}, fmt.Errorf("%w: cannot move campaign from %s to %s", ErrConflict, from, next)
+		}
+		add("status", next)
+	}
 	if v, ok := patch["budget_usd"].(float64); ok {
 		add("budget_usd", v)
 	}
 	if len(sets) == 1 {
-		return r.GetCampaign(ctx, id)
+		return cur, nil
 	}
 	args = append(args, id)
-	_, err := r.db(ctx).Exec(ctx, `UPDATE crm_campaigns SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
+	_, err = r.db(ctx).Exec(ctx, `UPDATE crm_campaigns SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
 	if err != nil {
 		return models.Campaign{}, err
 	}
@@ -678,9 +776,12 @@ func (r *Repository) PatchCampaign(ctx context.Context, id string, patch map[str
 func (r *Repository) CreateCampaign(ctx context.Context, in CampaignInput) (models.Campaign, error) {
 	id := r.NewID()
 	now := time.Now().UTC()
-	status := in.Status
-	if status == "" {
-		status = "draft"
+	// Creates always start as draft — CEO approval and go-live happen via PATCH.
+	status := models.CampaignStatusDraft
+	if raw := strings.TrimSpace(in.Status); raw != "" {
+		if models.NormalizeCampaignStatus(raw) != models.CampaignStatusDraft {
+			return models.Campaign{}, fmt.Errorf("%w: new campaigns must start as draft (got %q)", ErrInvalidInput, raw)
+		}
 	}
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_campaigns (id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at)

@@ -42,13 +42,17 @@ func listOpts(c *gin.Context) store.ListOpts {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	return store.ListOpts{
-		Limit:  limit,
-		Offset: offset,
-		Owner:  c.Query("owner"),
-		Stage:  c.Query("stage"),
-		Status: c.Query("status"),
-		Search: c.Query("q"),
-		Type:   c.Query("type"),
+		Limit:     limit,
+		Offset:    offset,
+		Owner:     c.Query("owner"),
+		Stage:     c.Query("stage"),
+		Status:    c.Query("status"),
+		Search:    c.Query("q"),
+		Type:      c.Query("type"),
+		AccountID: c.Query("account_id"),
+		DealID:    c.Query("deal_id"),
+		ContactID: c.Query("contact_id"),
+		LeadID:    c.Query("lead_id"),
 	}
 }
 

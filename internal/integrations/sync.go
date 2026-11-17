@@ -83,10 +83,20 @@ func (s *Service) SyncEmail(ctx context.Context, userEmail, provider string) (Sy
 	}
 	for _, addr := range addrs {
 		_ = s.Repo.TouchContactByEmail(ctx, addr)
-		_, _ = s.Repo.CreateActivity(ctx, store.ActivityInput{
-			Type: "email", Subject: "Synced message from "+addr, Owner: userEmail,
+		in := store.ActivityInput{
+			Type:       "email",
+			Subject:    "Synced message from " + addr,
+			Body:       "Imported from " + provider + " mailbox",
+			Owner:      userEmail,
 			OccurredAt: time.Now().UTC(),
-		})
+			Status:     "done",
+		}
+		if contactID, accountID, accountName, err := s.Repo.FindContactByEmail(ctx, addr); err == nil {
+			in.ContactID = contactID
+			in.AccountID = accountID
+			in.Account = accountName
+		}
+		_, _ = s.Repo.CreateActivity(ctx, in)
 	}
 	imported := len(addrs)
 	_ = s.Repo.TouchEmailSync(ctx, userEmail, provider)

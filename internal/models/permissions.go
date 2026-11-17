@@ -35,6 +35,10 @@ func PermissionDescriptors() []PermissionDescriptor {
 			})
 		}
 	}
+	out = append(out, PermissionDescriptor{
+		Name:        "campaigns.approve",
+		Description: "Approve campaigns pending CEO review",
+	})
 	return out
 }
 

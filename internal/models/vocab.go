@@ -38,6 +38,13 @@ const (
 	LeadStatusQualifying = "qualifying"
 	LeadStatusConverted  = "converted"
 	LeadStatusClosed     = "closed"
+
+	CampaignStatusDraft      = "draft"
+	CampaignStatusPendingCEO = "pending_ceo"
+	CampaignStatusApproved   = "approved"
+	CampaignStatusLive       = "live"
+	CampaignStatusPaused     = "paused"
+	CampaignStatusCompleted  = "completed"
 )
 
 var (
@@ -47,7 +54,52 @@ var (
 	ContactStatuses   = []string{ContactStatusActive, ContactStatusInactive}
 	LeadStatuses      = []string{LeadStatusQualifying, LeadStatusConverted, LeadStatusClosed}
 	TicketChannels    = []string{"email", "phone", "whatsapp", "web", "visit", "other"}
+	CampaignStatuses  = []string{
+		CampaignStatusDraft, CampaignStatusPendingCEO, CampaignStatusApproved,
+		CampaignStatusLive, CampaignStatusPaused, CampaignStatusCompleted,
+	}
 )
+
+// CampaignTransitions are the allowed status moves. CEO approval is pending_ceo → approved.
+var CampaignTransitions = map[string][]string{
+	CampaignStatusDraft:      {CampaignStatusPendingCEO},
+	CampaignStatusPendingCEO: {CampaignStatusApproved, CampaignStatusDraft},
+	CampaignStatusApproved:   {CampaignStatusLive, CampaignStatusDraft},
+	CampaignStatusLive:       {CampaignStatusPaused, CampaignStatusCompleted},
+	CampaignStatusPaused:     {CampaignStatusLive, CampaignStatusCompleted},
+	CampaignStatusCompleted:  {},
+}
+
+// NormalizeCampaignStatus maps legacy UI labels onto the controlled vocabulary.
+func NormalizeCampaignStatus(raw string) string {
+	key := strings.ToLower(strings.TrimSpace(raw))
+	key = strings.ReplaceAll(key, " ", "_")
+	switch key {
+	case "planned":
+		return CampaignStatusDraft
+	case "pending", "pending_ceo_approval", "awaiting_ceo":
+		return CampaignStatusPendingCEO
+	}
+	if InVocab(key, CampaignStatuses) {
+		return key
+	}
+	return key
+}
+
+// CanTransitionCampaign reports whether from → to is an allowed status change.
+func CanTransitionCampaign(from, to string) bool {
+	from = NormalizeCampaignStatus(from)
+	to = NormalizeCampaignStatus(to)
+	if from == to {
+		return true
+	}
+	for _, next := range CampaignTransitions[from] {
+		if next == to {
+			return true
+		}
+	}
+	return false
+}
 
 // TicketSLA is how long a ticket of each priority has before it breaches.
 // Before this every ticket got a flat 24h regardless of priority, so P1 and P4

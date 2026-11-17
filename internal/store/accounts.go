@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -216,6 +217,13 @@ type ListOpts struct {
 	Status string
 	Search string
 	Type   string
+	// Record-scoped timeline filters (activities 360).
+	AccountID string
+	DealID    string
+	ContactID string
+	// LeadID scopes activities logged against a lead via attrs.lead_id
+	// (crm_activities has no promoted lead_id column).
+	LeadID string
 
 	// ScopeOwner is the ENFORCED visibility boundary, set from the caller's
 	// identity and never from request input.
@@ -316,10 +324,11 @@ func scanAccount(row pgx.Row) (models.Account, error) {
 	// everyone, not just its own record. The billing columns beside them were
 	// already read this way; these four were not.
 	var dmsRef, email, phone, address *string
+	var lat, lng *float64
 	err := row.Scan(
 		&a.ID, &a.Name, &a.Type, &a.Country, &a.Segment, &a.Owner,
 		&a.Value, &amount, &currency, &a.Health, &a.Status, &a.Bridged,
-		&dmsRef, &email, &phone, &address,
+		&dmsRef, &email, &phone, &address, &lat, &lng,
 		&billingOrg, &billingID, &financeRef,
 		&a.LastTouchAt, &a.CreatedAt, &a.UpdatedAt,
 	)
@@ -335,6 +344,8 @@ func scanAccount(row pgx.Row) (models.Account, error) {
 	if address != nil {
 		a.Address = *address
 	}
+	a.Latitude = lat
+	a.Longitude = lng
 	if billingOrg != nil {
 		a.BillingOrgID = *billingOrg
 	}
@@ -383,7 +394,7 @@ func (r *Repository) ListAccounts(ctx context.Context, opts ListOpts) ([]models.
 	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, name, account_type, country, segment, owner, value_display,
 		       value_amount, value_currency, health_score, status, dms_bridged,
-		       COALESCE(dms_ref, ''), COALESCE(email, ''), COALESCE(phone, ''), COALESCE(address, ''),
+		       dms_ref, email, phone, address, latitude, longitude,
 		       billing_org_id, billing_identity_id, finance_customer_ref,
 		       last_touch_at, created_at, updated_at
 		FROM crm_accounts
@@ -410,7 +421,7 @@ func (r *Repository) GetAccount(ctx context.Context, id string) (models.Account,
 	row := r.db(ctx).QueryRow(ctx, `
 		SELECT id, name, account_type, country, segment, owner, value_display,
 		       value_amount, value_currency, health_score, status, dms_bridged,
-		       COALESCE(dms_ref, ''), COALESCE(email, ''), COALESCE(phone, ''), COALESCE(address, ''),
+		       dms_ref, email, phone, address, latitude, longitude,
 		       billing_org_id, billing_identity_id, finance_customer_ref,
 		       last_touch_at, created_at, updated_at
 		FROM crm_accounts WHERE id = $1
@@ -419,24 +430,26 @@ func (r *Repository) GetAccount(ctx context.Context, id string) (models.Account,
 }
 
 type AccountInput struct {
-	Name               string  `json:"name"`
-	Type               string  `json:"type"`
-	Country            string  `json:"country"`
-	Segment            string  `json:"segment"`
-	Owner              string  `json:"owner"`
-	Value              string  `json:"value"`
-	Health             int     `json:"health"`
-	Status             string  `json:"status"`
-	Bridged            bool    `json:"bridged"`
-	Email              string  `json:"email"`
-	Phone              string  `json:"phone"`
-	Address            string  `json:"address"`
-	DmsRef             string  `json:"dms_ref"`
-	BillingOrgID       string  `json:"billing_org_id"`
-	BillingIdentityID  string  `json:"billing_identity_id"`
-	FinanceCustomerRef string  `json:"finance_customer_ref"`
-	Amount             float64 `json:"amount"`
-	Currency           string  `json:"currency"`
+	Name               string   `json:"name"`
+	Type               string   `json:"type"`
+	Country            string   `json:"country"`
+	Segment            string   `json:"segment"`
+	Owner              string   `json:"owner"`
+	Value              string   `json:"value"`
+	Health             int      `json:"health"`
+	Status             string   `json:"status"`
+	Bridged            bool     `json:"bridged"`
+	Email              string   `json:"email"`
+	Phone              string   `json:"phone"`
+	Address            string   `json:"address"`
+	Latitude           *float64 `json:"latitude"`
+	Longitude          *float64 `json:"longitude"`
+	DmsRef             string   `json:"dms_ref"`
+	BillingOrgID       string   `json:"billing_org_id"`
+	BillingIdentityID  string   `json:"billing_identity_id"`
+	FinanceCustomerRef string   `json:"finance_customer_ref"`
+	Amount             float64  `json:"amount"`
+	Currency           string   `json:"currency"`
 }
 
 func (r *Repository) CreateAccount(ctx context.Context, in AccountInput) (models.Account, error) {
@@ -452,12 +465,13 @@ func (r *Repository) CreateAccount(ctx context.Context, in AccountInput) (models
 		INSERT INTO crm_accounts (
 			id, name, account_type, country, segment, owner, value_display,
 			value_amount, value_currency, health_score, status, dms_bridged,
-			dms_ref, email, phone, address, billing_org_id, billing_identity_id, finance_customer_ref,
+			dms_ref, email, phone, address, latitude, longitude,
+			billing_org_id, billing_identity_id, finance_customer_ref,
 			last_touch_at, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$20,$20)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$22,$22)
 	`, id, in.Name, in.Type, in.Country, in.Segment, in.Owner, in.Value,
 		nullFloat(in.Amount), nullStr(in.Currency), in.Health, in.Status, in.Bridged,
-		nullStr(in.DmsRef), in.Email, in.Phone, in.Address,
+		nullStr(in.DmsRef), in.Email, in.Phone, in.Address, in.Latitude, in.Longitude,
 		nullStr(in.BillingOrgID), nullStr(in.BillingIdentityID), nullStr(in.FinanceCustomerRef), now)
 	if err != nil {
 		return models.Account{}, err
@@ -509,6 +523,21 @@ func (r *Repository) PatchAccount(ctx context.Context, id string, patch map[stri
 	}
 	if v, ok := patch["finance_customer_ref"].(string); ok {
 		add("finance_customer_ref", v)
+	}
+	if v, ok := patch["email"].(string); ok {
+		add("email", v)
+	}
+	if v, ok := patch["phone"].(string); ok {
+		add("phone", v)
+	}
+	if v, ok := patch["address"].(string); ok {
+		add("address", v)
+	}
+	if _, ok := patch["latitude"]; ok {
+		add("latitude", floatPtrFromPatch(patch["latitude"]))
+	}
+	if _, ok := patch["longitude"]; ok {
+		add("longitude", floatPtrFromPatch(patch["longitude"]))
 	}
 	if len(sets) == 1 {
 		return r.GetAccount(ctx, id)
@@ -726,4 +755,33 @@ func nullFloat(f float64) any {
 		return nil
 	}
 	return f
+}
+
+// floatPtrFromPatch accepts a JSON number, string number, or null and returns
+// a *float64 suitable for a nullable DOUBLE PRECISION column.
+func floatPtrFromPatch(raw any) any {
+	if raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return nil
+		}
+		return f
+	default:
+		return nil
+	}
 }
