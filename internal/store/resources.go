@@ -100,13 +100,9 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 	if in.Currency == "" {
 		in.Currency = "USD"
 	}
-	accountID := in.AccountID
-	if accountID == "" && in.Account != "" {
-		resolved, err := r.resolveAccountID(ctx, in.Account)
-		if err != nil {
-			return models.Quote{}, err
-		}
-		accountID = resolved
+	accountID, accountName, err := r.requireAccountRef(ctx, in.AccountID, in.Account)
+	if err != nil {
+		return models.Quote{}, err
 	}
 	dealID := in.DealID
 	if dealID == "" && in.Deal != "" {
@@ -121,11 +117,11 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteInput) (models.Quo
 	}
 	lineRaw, _ := json.Marshal(in.LineItems)
 	now := time.Now().UTC()
-	_, err := r.db(ctx).Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_quotes (id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
 			valid_until, total, status, version, owner, line_items, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'draft',1,$12,$13,$14,$14)
-	`, id, in.Ref, nullStr(accountID), in.Account, nullStr(dealID), in.Template, in.Currency,
+	`, id, in.Ref, accountID, accountName, nullStr(dealID), in.Template, in.Currency,
 		in.Incoterms, in.PaymentTerms, in.ValidUntil, in.Total, in.Owner, lineRaw, now)
 	if err != nil {
 		return models.Quote{}, err
@@ -173,6 +169,18 @@ func (r *Repository) PatchQuote(ctx context.Context, id string, patch map[string
 			args = append(args, models.QuoteLinesTotal(items))
 			i++
 		}
+	}
+	if v, ok := patch["account"].(string); ok {
+		accountID, accountName, err := r.requireAccountRef(ctx, "", v)
+		if err != nil {
+			return models.Quote{}, err
+		}
+		sets = append(sets, fmt.Sprintf("account_id = $%d", i))
+		args = append(args, accountID)
+		i++
+		sets = append(sets, fmt.Sprintf("account_name = $%d", i))
+		args = append(args, accountName)
+		i++
 	}
 	if len(sets) == 0 {
 		return r.GetQuote(ctx, id)
@@ -527,13 +535,9 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 	if status == "" {
 		status = "open"
 	}
-	accountID := in.AccountID
-	if accountID == "" && in.Account != "" {
-		resolved, err := r.resolveAccountID(ctx, in.Account)
-		if err != nil {
-			return models.Ticket{}, err
-		}
-		accountID = resolved
+	accountID, accountName, err := r.requireAccountRef(ctx, in.AccountID, in.Account)
+	if err != nil {
+		return models.Ticket{}, err
 	}
 	contactID, dealID, err := r.resolveLinks(ctx, in.ContactID, in.Contact, in.DealID, in.Deal)
 	if err != nil {
@@ -551,7 +555,7 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 		INSERT INTO crm_tickets (id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type,
 			priority, channel, status, owner, description, occurred_at, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19)
-	`, id, nullStr(accountID), in.Account, nullStr(contactID), nullStr(in.OutletRef), nullStr(dealID),
+	`, id, accountID, accountName, nullStr(contactID), nullStr(in.OutletRef), nullStr(dealID),
 		in.Subject, in.Type, in.Priority, in.Channel, status, in.Owner, in.Description, occurredAt, sla,
 		in.ResolvedAt, in.Resolution, encodeAttrs(in.Attrs), now)
 	if err != nil {
@@ -589,10 +593,8 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 		// The outcome of a complaint was unwritable: an agent could close a
 		// ticket but never record how.
 		"resolution": "resolution",
-		// account was missing entirely, so a complaint filed against the wrong
-		// customer could never be moved to the right one — the field is required
-		// on the client form and the edit was a silent no-op returning 200.
-		"account": "account_name",
+		// account is applied below via requireAccountRef so account_id and
+		// account_name stay in lockstep (and we never SET the same column twice).
 	} {
 		if v, ok := patch[k].(string); ok {
 			add(col, v)
@@ -622,13 +624,16 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 	}
 	// Keep the foreign key with the name, for the reason PatchDeal spells out:
 	// a display name and an account_id that disagree look correct on screen and
-	// are wrong in every join.
+	// are wrong in every join. Tickets must stay on a real customer.
 	if v, ok := patch["account"].(string); ok {
-		accountID, err := r.resolveAccountID(ctx, v)
+		accountID, accountName, err := r.requireAccountRef(ctx, "", v)
 		if err != nil {
 			return models.Ticket{}, err
 		}
-		add("account_id", nullStr(accountID))
+		add("account_id", accountID)
+		// account_name may already have been set from the string loop above;
+		// force the resolved display name so it cannot drift from the FK.
+		add("account_name", accountName)
 	}
 	if attrs, ok := patchAttrs(patch); ok {
 		sets = append(sets, attrs.SetExpr(i))

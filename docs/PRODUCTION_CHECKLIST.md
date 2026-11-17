@@ -6,7 +6,7 @@ Use this before enabling CRM in staging/production.
 
 | Item | Env / setting | Verify |
 |------|----------------|--------|
-| Database | `DATABASE_URL`; boot runs embedded migrations through `0015_territories_assignment` (and sibling `0015_campaign_status_vocab`) | `GET /ready` returns `database: true`; `/admin/schema` (or health) lists both `0015_*` versions |
+| Database | `DATABASE_URL`; boot runs embedded migrations through `0017_account_required_contacts_quotes_tickets` (and prior `0015_*` / `0016_*`) | `GET /ready` returns `database: true`; contacts/quotes/tickets have non-null `account_id` |
 | Auth | `JWT_ISSUER`, `JWKS_URL`, `AUDIENCE=iag.crm` | Mutating API returns 401 without Bearer |
 | Service account | `SERVICE_CLIENT_SECRET` (≥16 chars) | Startup log: permissions registered |
 | Strict RBAC | `ENVIRONMENT=production` | Tokens without `permissions` are denied |

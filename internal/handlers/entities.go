@@ -132,6 +132,10 @@ func (h *API) CreateContact(c *gin.Context) {
 		badRequest(c, "name and email are required")
 		return
 	}
+	if strings.TrimSpace(in.Account) == "" && strings.TrimSpace(in.AccountID) == "" {
+		badRequest(c, "account is required")
+		return
+	}
 	stampOwner(c, &in.Owner)
 	if !requireVocab(c, "status", in.Status, models.ContactStatuses) {
 		return
@@ -150,6 +154,10 @@ func (h *API) CreateContact(c *gin.Context) {
 		}
 		return nil
 	}); err != nil {
+		if errors.Is(err, store.ErrInvalidInput) {
+			badRequest(c, err.Error())
+			return
+		}
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create contact failed")
 		return
 	}
@@ -175,6 +183,10 @@ func (h *API) PatchContact(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound(c)
+			return
+		}
+		if errors.Is(err, store.ErrInvalidInput) {
+			badRequest(c, err.Error())
 			return
 		}
 		apierr.JSONStatus(c, http.StatusInternalServerError, "update contact failed")
@@ -431,6 +443,10 @@ func (h *API) CreateQuote(c *gin.Context) {
 		badRequest(c, "invalid body")
 		return
 	}
+	if strings.TrimSpace(in.Account) == "" && strings.TrimSpace(in.AccountID) == "" {
+		badRequest(c, "account is required")
+		return
+	}
 	if len(in.LineItems) > 0 {
 		in.Total = models.QuoteLinesTotal(in.LineItems)
 	}
@@ -441,6 +457,10 @@ func (h *API) CreateQuote(c *gin.Context) {
 	stampOwner(c, &in.Owner)
 	item, err := h.Repo.CreateQuote(c.Request.Context(), in)
 	if err != nil {
+		if errors.Is(err, store.ErrInvalidInput) {
+			badRequest(c, err.Error())
+			return
+		}
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create quote failed")
 		return
 	}
@@ -473,6 +493,10 @@ func (h *API) PatchQuote(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound(c)
+			return
+		}
+		if errors.Is(err, store.ErrInvalidInput) {
+			badRequest(c, err.Error())
 			return
 		}
 		apierr.JSONStatus(c, http.StatusInternalServerError, "update quote failed")
@@ -543,6 +567,10 @@ func (h *API) CreateTicket(c *gin.Context) {
 		badRequest(c, "subject is required")
 		return
 	}
+	if strings.TrimSpace(in.Account) == "" && strings.TrimSpace(in.AccountID) == "" {
+		badRequest(c, "account is required")
+		return
+	}
 	stampOwner(c, &in.Owner)
 	if !requireVocab(c, "status", in.Status, models.TicketStatuses) ||
 		!requireVocab(c, "priority", in.Priority, models.TicketPriorities) ||
@@ -572,6 +600,10 @@ func (h *API) CreateTicket(c *gin.Context) {
 		}
 		return nil
 	}); err != nil {
+		if errors.Is(err, store.ErrInvalidInput) {
+			badRequest(c, err.Error())
+			return
+		}
 		apierr.JSONStatus(c, http.StatusInternalServerError, "create ticket failed")
 		return
 	}
@@ -595,6 +627,10 @@ func (h *API) PatchTicket(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound(c)
+			return
+		}
+		if errors.Is(err, store.ErrInvalidInput) {
+			badRequest(c, err.Error())
 			return
 		}
 		apierr.JSONStatus(c, http.StatusInternalServerError, "update ticket failed")

@@ -34,6 +34,37 @@ func (r *Repository) resolveAccountID(ctx context.Context, name string) (string,
 	return id, nil
 }
 
+// requireAccountRef resolves account_id + display name for edges that must
+// belong to a real customer (contacts, quotes, tickets). Empty or unmatched
+// input is ErrInvalidInput — never a silent null FK.
+func (r *Repository) requireAccountRef(ctx context.Context, accountID, accountName string) (id, name string, err error) {
+	id = strings.TrimSpace(accountID)
+	name = strings.TrimSpace(accountName)
+	if id == "" && name == "" {
+		return "", "", fmt.Errorf("%w: account is required", ErrInvalidInput)
+	}
+	if id == "" {
+		aid, err := r.resolveAccountID(ctx, name)
+		if err != nil {
+			return "", "", err
+		}
+		if aid == "" {
+			return "", "", fmt.Errorf("%w: account %q not found", ErrInvalidInput, name)
+		}
+		return aid, name, nil
+	}
+	if name == "" {
+		err := r.db(ctx).QueryRow(ctx, `SELECT name FROM crm_accounts WHERE id = $1`, id).Scan(&name)
+		if errors.Is(err, pgx.ErrNoRows) || name == "" {
+			return "", "", fmt.Errorf("%w: account_id %q not found", ErrInvalidInput, id)
+		}
+		if err != nil {
+			return "", "", fmt.Errorf("load account name: %w", err)
+		}
+	}
+	return id, name, nil
+}
+
 // resolveContactID and resolveDealID are resolveAccountID for the other two
 // typed references an activity or ticket can carry. The record clients have
 // one string per field and no id picker, so a name is what arrives; an
@@ -640,23 +671,18 @@ type ContactInput struct {
 
 func (r *Repository) CreateContact(ctx context.Context, in ContactInput) (models.Contact, error) {
 	id := r.NewID()
-	accountID := in.AccountID
-	accountName := in.Account
-	if accountID == "" && accountName != "" {
-		aid, err := r.resolveAccountID(ctx, accountName)
-		if err != nil {
-			return models.Contact{}, err
-		}
-		accountID = aid
+	accountID, accountName, err := r.requireAccountRef(ctx, in.AccountID, in.Account)
+	if err != nil {
+		return models.Contact{}, err
 	}
 	if in.Status == "" {
 		in.Status = models.ContactStatusActive
 	}
 	now := time.Now().UTC()
-	_, err := r.db(ctx).Exec(ctx, `
+	_, err = r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_contacts (id, account_id, account_name, name, title, email, phone, buyer_role, owner, is_primary, status, attrs, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
-	`, id, nullStr(accountID), accountName, in.Name, in.Title, in.Email, in.Phone, in.BuyerRole, in.Owner, in.Primary, in.Status,
+	`, id, accountID, accountName, in.Name, in.Title, in.Email, in.Phone, in.BuyerRole, in.Owner, in.Primary, in.Status,
 		encodeAttrs(in.Attrs), now)
 	if err != nil {
 		return models.Contact{}, err
@@ -718,14 +744,15 @@ func (r *Repository) PatchContact(ctx context.Context, id string, patch map[stri
 		i++
 	}
 	// Re-point the foreign key alongside the display name — see PatchDeal for
-	// why the two drifting apart is the damaging case.
+	// why the two drifting apart is the damaging case. Contacts must stay on a
+	// real customer: clearing or inventing an account name is rejected.
 	if name, ok := patchedAccountName(patch); ok {
-		accountID, err := r.resolveAccountID(ctx, name)
+		accountID, _, err := r.requireAccountRef(ctx, "", name)
 		if err != nil {
 			return models.Contact{}, err
 		}
 		sets = append(sets, fmt.Sprintf("account_id = $%d", i))
-		args = append(args, nullStr(accountID))
+		args = append(args, accountID)
 		i++
 	}
 	if len(sets) == 0 {
