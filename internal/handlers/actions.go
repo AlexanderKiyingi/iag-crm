@@ -228,8 +228,13 @@ func (h *API) ActivitiesStream(c *gin.Context) {
 		return
 	}
 
+	opts := scopedListOpts(c)
+	if opts.Limit <= 0 || opts.Limit > 40 {
+		opts.Limit = 40
+	}
+
 	send := func() bool {
-		items, _, err := h.Repo.ListActivities(c.Request.Context(), store.ListOpts{Limit: 8})
+		items, _, err := h.Repo.ListActivities(c.Request.Context(), opts)
 		if err != nil {
 			return false
 		}

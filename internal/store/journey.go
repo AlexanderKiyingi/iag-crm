@@ -152,7 +152,7 @@ type EnrollInput struct {
 }
 
 func (r *Repository) EnrollInJourney(ctx context.Context, journeyID string, in EnrollInput) (JourneyEnrollment, error) {
-	if existing, err := r.GetActiveEnrollment(ctx, journeyID, in.ContactID, in.LeadID); err == nil {
+	if existing, err := r.GetActiveEnrollment(ctx, journeyID, in.ContactID, in.LeadID, in.SubjectEmail); err == nil {
 		return existing, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return JourneyEnrollment{}, err
@@ -224,7 +224,7 @@ func (r *Repository) ListJourneyEnrollments(ctx context.Context, journeyID strin
 	return out, rows.Err()
 }
 
-func (r *Repository) GetActiveEnrollment(ctx context.Context, journeyID, contactID, leadID string) (JourneyEnrollment, error) {
+func (r *Repository) GetActiveEnrollment(ctx context.Context, journeyID, contactID, leadID, subjectEmail string) (JourneyEnrollment, error) {
 	var e JourneyEnrollment
 	var cid, lid *string
 	err := r.pool.QueryRow(ctx, `
@@ -235,10 +235,11 @@ func (r *Repository) GetActiveEnrollment(ctx context.Context, journeyID, contact
 		  AND (
 		    ($2 <> '' AND contact_id = $2)
 		    OR ($3 <> '' AND lead_id = $3)
+		    OR ($2 = '' AND $3 = '' AND $4 <> '' AND LOWER(subject_email) = LOWER($4))
 		  )
 		ORDER BY enrolled_at DESC
 		LIMIT 1
-	`, journeyID, contactID, leadID).Scan(
+	`, journeyID, contactID, leadID, strings.TrimSpace(subjectEmail)).Scan(
 		&e.ID, &e.JourneyID, &cid, &lid, &e.SubjectEmail, &e.SubjectName,
 		&e.Status, &e.CurrentStep, &e.NextRunAt, &e.EnrolledAt,
 	)
