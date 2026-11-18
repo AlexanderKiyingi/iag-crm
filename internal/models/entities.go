@@ -238,6 +238,7 @@ type Campaign struct {
 	Name      string     `json:"name"`
 	Type      string     `json:"type"`
 	Audience  string     `json:"audience"`
+	SegmentID string     `json:"segment_id,omitempty"`
 	StartsOn  *time.Time `json:"starts_on,omitempty"`
 	EndsOn    *time.Time `json:"ends_on,omitempty"`
 	BudgetUSD float64    `json:"budget_usd,omitempty"`

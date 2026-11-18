@@ -47,15 +47,25 @@ func scanQuote(row pgx.Row) (models.Quote, error) {
 
 func (r *Repository) ListQuotes(ctx context.Context, opts ListOpts) ([]models.Quote, int, error) {
 	opts.Limit = clampLimit(opts.Limit)
+	where := []string{"1=1"}
+	args := []any{}
+	i := 1
+	where, args = applyScope(opts, "owner", where, args, &i)
+	if opts.AccountID != "" {
+		where = append(where, fmt.Sprintf("account_id = $%d", i))
+		args = append(args, opts.AccountID)
+		i++
+	}
+	whereSQL := strings.Join(where, " AND ")
 	var total int
-	if err := r.db(ctx).QueryRow(ctx, `SELECT COUNT(*)::int FROM crm_quotes`).Scan(&total); err != nil {
+	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_quotes WHERE "+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
+	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `
 		SELECT id, ref, account_id, account_name, deal_id, template, currency, incoterms, payment_terms,
 		       valid_until, total, status, version, owner, line_items, finance_ar_ref, contract_ref, created_at, updated_at
-		FROM crm_quotes ORDER BY created_at DESC LIMIT $1 OFFSET $2
-	`, opts.Limit, opts.Offset)
+		FROM crm_quotes WHERE `+whereSQL+` ORDER BY created_at DESC LIMIT $`+fmt.Sprint(i)+` OFFSET $`+fmt.Sprint(i+1), args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -467,6 +477,11 @@ func (r *Repository) ListTickets(ctx context.Context, opts ListOpts) ([]models.T
 		args = append(args, opts.Status)
 		i++
 	}
+	if opts.AccountID != "" {
+		where = append(where, fmt.Sprintf("account_id = $%d", i))
+		args = append(args, opts.AccountID)
+		i++
+	}
 	whereSQL := strings.Join(where, " AND ")
 	var total int
 	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_tickets WHERE "+whereSQL, args...).Scan(&total); err != nil {
@@ -541,6 +556,9 @@ func (r *Repository) CreateTicket(ctx context.Context, in TicketInput) (models.T
 	}
 	contactID, dealID, err := r.resolveLinks(ctx, in.ContactID, in.Contact, in.DealID, in.Deal)
 	if err != nil {
+		return models.Ticket{}, err
+	}
+	if err := r.requireContactBelongsToAccount(ctx, contactID, accountID); err != nil {
 		return models.Ticket{}, err
 	}
 	// The SLA clock runs from when the incident happened, not from when it
@@ -618,9 +636,23 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 			i++
 		}
 	}
-	var err error
+	cur, err := r.GetTicket(ctx, id)
+	if err != nil {
+		return models.Ticket{}, err
+	}
+	accountIDForCheck := cur.AccountID
+	contactIDForCheck := cur.ContactID
 	if i, err = r.patchLinks(ctx, patch, &sets, &args, i); err != nil {
 		return models.Ticket{}, err
+	}
+	if v, ok := patch["contact_id"].(string); ok {
+		contactIDForCheck = strings.TrimSpace(v)
+	} else if v, ok := patch["contact"].(string); ok {
+		if resolved, rerr := r.resolveContactID(ctx, v); rerr != nil {
+			return models.Ticket{}, rerr
+		} else {
+			contactIDForCheck = resolved
+		}
 	}
 	// Keep the foreign key with the name, for the reason PatchDeal spells out:
 	// a display name and an account_id that disagree look correct on screen and
@@ -630,10 +662,12 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 		if err != nil {
 			return models.Ticket{}, err
 		}
+		accountIDForCheck = accountID
 		add("account_id", accountID)
-		// account_name may already have been set from the string loop above;
-		// force the resolved display name so it cannot drift from the FK.
 		add("account_name", accountName)
+	}
+	if err := r.requireContactBelongsToAccount(ctx, contactIDForCheck, accountIDForCheck); err != nil {
+		return models.Ticket{}, err
 	}
 	if attrs, ok := patchAttrs(patch); ok {
 		sets = append(sets, attrs.SetExpr(i))
@@ -641,12 +675,7 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 		i++
 	}
 	if len(sets) == 1 {
-		row := r.db(ctx).QueryRow(ctx, `
-			SELECT id, account_id, account_name, contact_id, outlet_ref, deal_id, subject, ticket_type, priority, channel,
-			       status, owner, description, dms_claim_ref, sla_due_at, resolved_at, resolution, attrs, created_at, updated_at
-			FROM crm_tickets WHERE id = $1
-		`, id)
-		return r.ticketWithLinks(ctx, row)
+		return cur, nil
 	}
 	args = append(args, id)
 	_, err = r.db(ctx).Exec(ctx, `UPDATE crm_tickets SET `+strings.Join(sets, ", ")+` WHERE id = $`+fmt.Sprint(i), args...)
@@ -664,6 +693,7 @@ func (r *Repository) PatchTicket(ctx context.Context, id string, patch map[strin
 func scanCampaign(row pgx.Row) (models.Campaign, error) {
 	var c models.Campaign
 	var starts, ends *time.Time
+	var segmentID *string
 	// budget_usd is nullable and CreateCampaign writes NULL for it whenever no
 	// budget was given (nullFloat turns 0 into nil). Scanning that into a plain
 	// float64 errors, and because the create re-reads the row it just inserted,
@@ -673,11 +703,14 @@ func scanCampaign(row pgx.Row) (models.Campaign, error) {
 	// a budget, which is why every read path looked healthy.
 	var budget *float64
 	err := row.Scan(
-		&c.ID, &c.Name, &c.Type, &c.Audience, &starts, &ends, &budget, &c.Owner, &c.Goal, &c.Status,
+		&c.ID, &c.Name, &c.Type, &c.Audience, &segmentID, &starts, &ends, &budget, &c.Owner, &c.Goal, &c.Status,
 		&c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return c, err
+	}
+	if segmentID != nil {
+		c.SegmentID = *segmentID
 	}
 	if budget != nil {
 		c.BudgetUSD = *budget
@@ -694,7 +727,7 @@ func (r *Repository) ListCampaigns(ctx context.Context, opts ListOpts) ([]models
 		return nil, 0, err
 	}
 	rows, err := r.db(ctx).Query(ctx, `
-		SELECT id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at
+		SELECT id, name, campaign_type, audience, segment_id, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at
 		FROM crm_campaigns ORDER BY created_at DESC LIMIT $1 OFFSET $2
 	`, opts.Limit, opts.Offset)
 	if err != nil {
@@ -716,6 +749,7 @@ type CampaignInput struct {
 	Name      string     `json:"name"`
 	Type      string     `json:"type"`
 	Audience  string     `json:"audience"`
+	SegmentID string     `json:"segment_id"`
 	StartsOn  *time.Time `json:"starts_on"`
 	EndsOn    *time.Time `json:"ends_on"`
 	BudgetUSD float64    `json:"budget_usd"`
@@ -726,7 +760,7 @@ type CampaignInput struct {
 
 func (r *Repository) GetCampaign(ctx context.Context, id string) (models.Campaign, error) {
 	row := r.db(ctx).QueryRow(ctx, `
-		SELECT id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at
+		SELECT id, name, campaign_type, audience, segment_id, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at
 		FROM crm_campaigns WHERE id = $1
 	`, id)
 	return scanCampaign(row)
@@ -751,6 +785,37 @@ func (r *Repository) PatchCampaign(ctx context.Context, id string, patch map[str
 	} {
 		if v, ok := patch[k].(string); ok {
 			add(col, v)
+		}
+	}
+	if v, ok := patch["segment_id"].(string); ok {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			add("segment_id", nil)
+		} else {
+			var exists string
+			if err := r.db(ctx).QueryRow(ctx, `SELECT id FROM crm_segments WHERE id = $1`, v).Scan(&exists); err != nil {
+				return models.Campaign{}, fmt.Errorf("%w: segment %q not found", ErrInvalidInput, v)
+			}
+			add("segment_id", v)
+			if _, hasAud := patch["audience"]; !hasAud {
+				var segName string
+				_ = r.db(ctx).QueryRow(ctx, `SELECT name FROM crm_segments WHERE id = $1`, v).Scan(&segName)
+				if segName != "" {
+					add("audience", segName)
+				}
+			}
+		}
+	} else if aud, ok := patch["audience"].(string); ok {
+		aud = strings.TrimSpace(aud)
+		if aud == "" {
+			add("segment_id", nil)
+		} else {
+			var foundID string
+			if err := r.db(ctx).QueryRow(ctx,
+				`SELECT id FROM crm_segments WHERE lower(name) = lower($1) LIMIT 1`, aud,
+			).Scan(&foundID); err == nil {
+				add("segment_id", foundID)
+			}
 		}
 	}
 	if raw, ok := patch["status"].(string); ok {
@@ -788,15 +853,34 @@ func (r *Repository) CreateCampaign(ctx context.Context, in CampaignInput) (mode
 			return models.Campaign{}, fmt.Errorf("%w: new campaigns must start as draft (got %q)", ErrInvalidInput, raw)
 		}
 	}
+	segmentID := strings.TrimSpace(in.SegmentID)
+	audience := strings.TrimSpace(in.Audience)
+	if segmentID != "" {
+		var segName string
+		if err := r.db(ctx).QueryRow(ctx, `SELECT name FROM crm_segments WHERE id = $1`, segmentID).Scan(&segName); err != nil {
+			return models.Campaign{}, fmt.Errorf("%w: segment %q not found", ErrInvalidInput, segmentID)
+		}
+		if audience == "" {
+			audience = segName
+		}
+	} else if audience != "" {
+		// Desk audience picker stores the segment name — resolve to FK when possible.
+		var foundID string
+		if err := r.db(ctx).QueryRow(ctx,
+			`SELECT id FROM crm_segments WHERE lower(name) = lower($1) LIMIT 1`, audience,
+		).Scan(&foundID); err == nil {
+			segmentID = foundID
+		}
+	}
 	_, err := r.db(ctx).Exec(ctx, `
-		INSERT INTO crm_campaigns (id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
-	`, id, in.Name, in.Type, in.Audience, in.StartsOn, in.EndsOn, nullFloat(in.BudgetUSD), in.Owner, in.Goal, status, now)
+		INSERT INTO crm_campaigns (id, name, campaign_type, audience, segment_id, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+	`, id, in.Name, in.Type, audience, nullStr(segmentID), in.StartsOn, in.EndsOn, nullFloat(in.BudgetUSD), in.Owner, in.Goal, status, now)
 	if err != nil {
 		return models.Campaign{}, err
 	}
 	row := r.db(ctx).QueryRow(ctx, `
-		SELECT id, name, campaign_type, audience, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at
+		SELECT id, name, campaign_type, audience, segment_id, starts_on, ends_on, budget_usd, owner, goal, status, created_at, updated_at
 		FROM crm_campaigns WHERE id = $1
 	`, id)
 	return scanCampaign(row)
