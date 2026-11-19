@@ -668,10 +668,18 @@ func (h *API) GetAccount360(c *gin.Context) {
 	if !enforceOwner(c, acct.Owner) {
 		return
 	}
-	deals, _, _ := h.Repo.ListDeals(c.Request.Context(), store.ListOpts{Limit: 10, Search: acct.Name})
-	contacts, _, _ := h.Repo.ListContacts(c.Request.Context(), store.ListOpts{Limit: 10, Search: acct.Name})
-	tickets, _, _ := h.Repo.ListTickets(c.Request.Context(), store.ListOpts{Limit: 5})
-	out := gin.H{"account": acct, "deals": deals, "contacts": contacts, "tickets": tickets}
+	scope := store.ListOpts{Limit: 20, AccountID: acct.ID}
+	deals, _, _ := h.Repo.ListDeals(c.Request.Context(), scope)
+	contacts, _, _ := h.Repo.ListContacts(c.Request.Context(), scope)
+	tickets, _, _ := h.Repo.ListTickets(c.Request.Context(), scope)
+	quotes, _, _ := h.Repo.ListQuotes(c.Request.Context(), scope)
+	out := gin.H{
+		"account":  acct,
+		"deals":    deals,
+		"contacts": contacts,
+		"tickets":  tickets,
+		"quotes":   quotes,
+	}
 	customerRef := acct.FinanceCustomerRef
 	if customerRef == "" && acct.Name != "" {
 		customerRef = acct.Name

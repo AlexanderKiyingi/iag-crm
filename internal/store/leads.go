@@ -246,9 +246,44 @@ func (r *Repository) ConvertLead(ctx context.Context, leadID string, dealIn Deal
 		if dealIn.Owner == "" {
 			dealIn.Owner = lead.Owner
 		}
+		// Inherit the lead's customer onto the deal when the client did not send one.
+		if strings.TrimSpace(dealIn.AccountID) == "" && strings.TrimSpace(dealIn.Account) == "" {
+			dealIn.AccountID = lead.AccountID
+			dealIn.Account = lead.Account
+			if dealIn.Account == "" && strings.TrimSpace(lead.Company) != "" {
+				dealIn.Account = strings.TrimSpace(lead.Company)
+			}
+		}
 		deal, err = r.CreateDeal(ctx, dealIn)
 		if err != nil {
 			return err
+		}
+		// Materialize a Contact under the deal's customer when we have enough
+		// person fields — peers land Account+Contact on convert. Skip when no
+		// resolvable customer exists (walk-in lead); the deal still converts.
+		accountID := deal.AccountID
+		accountName := deal.Account
+		if accountID == "" && accountName == "" {
+			accountID = lead.AccountID
+			accountName = lead.Account
+		}
+		if strings.TrimSpace(lead.Email) != "" {
+			if resolvedID, resolvedName, aerr := r.requireAccountRef(ctx, accountID, accountName); aerr == nil {
+				existingID, _, _, findErr := r.FindContactByEmail(ctx, lead.Email)
+				if findErr != nil || existingID == "" {
+					if _, cerr := r.CreateContact(ctx, ContactInput{
+						Name:      lead.Name,
+						Email:     lead.Email,
+						Phone:     lead.Phone,
+						Account:   resolvedName,
+						AccountID: resolvedID,
+						Owner:     lead.Owner,
+						Status:    models.ContactStatusActive,
+					}); cerr != nil {
+						return cerr
+					}
+				}
+			}
 		}
 		// Mark the lead converted in the same transaction as the deal insert.
 		// If this fails the whole conversion rolls back, so a retry can't leave

@@ -69,6 +69,11 @@ func (r *Repository) ListDeals(ctx context.Context, opts ListOpts) ([]models.Dea
 		args = append(args, opts.Stage)
 		i++
 	}
+	if opts.AccountID != "" {
+		where = append(where, fmt.Sprintf("account_id = $%d", i))
+		args = append(args, opts.AccountID)
+		i++
+	}
 	whereSQL := strings.Join(where, " AND ")
 	var total int
 	if err := r.db(ctx).QueryRow(ctx, "SELECT COUNT(*)::int FROM crm_deals WHERE "+whereSQL, args...).Scan(&total); err != nil {

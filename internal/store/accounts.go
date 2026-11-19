@@ -102,6 +102,28 @@ func (r *Repository) resolveDealID(ctx context.Context, name string) (string, er
 	return id, nil
 }
 
+// requireContactBelongsToAccount ensures a linked contact is under the same
+// customer as the ticket/quote parent (Dynamics-style contact-org check).
+func (r *Repository) requireContactBelongsToAccount(ctx context.Context, contactID, accountID string) error {
+	contactID = strings.TrimSpace(contactID)
+	accountID = strings.TrimSpace(accountID)
+	if contactID == "" || accountID == "" {
+		return nil
+	}
+	var contactAccount string
+	err := r.db(ctx).QueryRow(ctx, `SELECT COALESCE(account_id::text, '') FROM crm_contacts WHERE id = $1`, contactID).Scan(&contactAccount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: contact %q not found", ErrInvalidInput, contactID)
+	}
+	if err != nil {
+		return fmt.Errorf("load contact account: %w", err)
+	}
+	if contactAccount != accountID {
+		return fmt.Errorf("%w: contact does not belong to account", ErrInvalidInput)
+	}
+	return nil
+}
+
 // resolveLinks fills contact_id / deal_id from their names when the ids were
 // not sent. Shared by the activity and ticket create paths.
 func (r *Repository) resolveLinks(ctx context.Context, contactID, contactName, dealID, dealName string) (string, string, error) {
@@ -618,6 +640,11 @@ func (r *Repository) ListContacts(ctx context.Context, opts ListOpts) ([]models.
 	if opts.Search != "" {
 		where = append(where, fmt.Sprintf("(name ILIKE $%d OR email ILIKE $%d OR account_name ILIKE $%d)", i, i, i))
 		args = append(args, "%"+opts.Search+"%")
+		i++
+	}
+	if opts.AccountID != "" {
+		where = append(where, fmt.Sprintf("account_id = $%d", i))
+		args = append(args, opts.AccountID)
 		i++
 	}
 	whereSQL := strings.Join(where, " AND ")
