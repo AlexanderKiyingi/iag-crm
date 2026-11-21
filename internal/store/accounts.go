@@ -368,6 +368,8 @@ func scanAccount(row pgx.Row) (models.Account, error) {
 	var a models.Account
 	var amount *float64
 	var currency *string
+	var creditLimit *float64
+	var code *string
 	var billingOrg, billingID, financeRef *string
 	// dms_ref, email, phone and address are all nullable, and CreateAccount
 	// writes NULL into dms_ref for any account with no DMS reference
@@ -379,12 +381,21 @@ func scanAccount(row pgx.Row) (models.Account, error) {
 	var dmsRef, email, phone, address *string
 	var lat, lng *float64
 	err := row.Scan(
-		&a.ID, &a.Name, &a.Type, &a.Country, &a.Segment, &a.Owner,
-		&a.Value, &amount, &currency, &a.Health, &a.Status, &a.Bridged,
+		&a.ID, &code, &a.Name, &a.Type, &a.Country, &a.Segment, &a.Owner,
+		&a.Value, &amount, &currency, &creditLimit, &a.Health, &a.Status, &a.Bridged,
 		&dmsRef, &email, &phone, &address, &lat, &lng,
 		&billingOrg, &billingID, &financeRef,
 		&a.LastTouchAt, &a.CreatedAt, &a.UpdatedAt,
 	)
+	if code != nil {
+		a.Code = *code
+	}
+	if currency != nil {
+		a.Currency = *currency
+	}
+	if creditLimit != nil {
+		a.CreditLimit = *creditLimit
+	}
 	if dmsRef != nil {
 		a.DmsRef = *dmsRef
 	}
@@ -415,6 +426,22 @@ func scanAccount(row pgx.Row) (models.Account, error) {
 	return a, nil
 }
 
+// nextAccountCode mints the next CUS-#### party code from existing rows.
+func (r *Repository) nextAccountCode(ctx context.Context) (string, error) {
+	var max int
+	err := r.db(ctx).QueryRow(ctx, `
+		SELECT COALESCE(MAX(
+			NULLIF(regexp_replace(code, '[^0-9]', '', 'g'), '')::int
+		), 0)
+		FROM crm_accounts
+		WHERE code ~* '^CUS-[0-9]+$'
+	`).Scan(&max)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("CUS-%04d", max+1), nil
+}
+
 func (r *Repository) ListAccounts(ctx context.Context, opts ListOpts) ([]models.Account, int, error) {
 	opts.Limit = clampLimit(opts.Limit)
 	where := []string{"1=1"}
@@ -432,7 +459,7 @@ func (r *Repository) ListAccounts(ctx context.Context, opts ListOpts) ([]models.
 		i++
 	}
 	if opts.Search != "" {
-		where = append(where, fmt.Sprintf("(name ILIKE $%d OR segment ILIKE $%d)", i, i))
+		where = append(where, fmt.Sprintf("(name ILIKE $%d OR segment ILIKE $%d OR code ILIKE $%d)", i, i, i))
 		args = append(args, "%"+opts.Search+"%")
 		i++
 	}
@@ -445,8 +472,8 @@ func (r *Repository) ListAccounts(ctx context.Context, opts ListOpts) ([]models.
 
 	args = append(args, opts.Limit, opts.Offset)
 	rows, err := r.db(ctx).Query(ctx, `
-		SELECT id, name, account_type, country, segment, owner, value_display,
-		       value_amount, value_currency, health_score, status, dms_bridged,
+		SELECT id, code, name, account_type, country, segment, owner, value_display,
+		       value_amount, value_currency, credit_limit, health_score, status, dms_bridged,
 		       dms_ref, email, phone, address, latitude, longitude,
 		       billing_org_id, billing_identity_id, finance_customer_ref,
 		       last_touch_at, created_at, updated_at
@@ -472,8 +499,8 @@ func (r *Repository) ListAccounts(ctx context.Context, opts ListOpts) ([]models.
 
 func (r *Repository) GetAccount(ctx context.Context, id string) (models.Account, error) {
 	row := r.db(ctx).QueryRow(ctx, `
-		SELECT id, name, account_type, country, segment, owner, value_display,
-		       value_amount, value_currency, health_score, status, dms_bridged,
+		SELECT id, code, name, account_type, country, segment, owner, value_display,
+		       value_amount, value_currency, credit_limit, health_score, status, dms_bridged,
 		       dms_ref, email, phone, address, latitude, longitude,
 		       billing_org_id, billing_identity_id, finance_customer_ref,
 		       last_touch_at, created_at, updated_at
@@ -484,6 +511,7 @@ func (r *Repository) GetAccount(ctx context.Context, id string) (models.Account,
 
 type AccountInput struct {
 	Name               string   `json:"name"`
+	Code               string   `json:"code"`
 	Type               string   `json:"type"`
 	Country            string   `json:"country"`
 	Segment            string   `json:"segment"`
@@ -503,6 +531,7 @@ type AccountInput struct {
 	FinanceCustomerRef string   `json:"finance_customer_ref"`
 	Amount             float64  `json:"amount"`
 	Currency           string   `json:"currency"`
+	CreditLimit        float64  `json:"credit_limit"`
 }
 
 func (r *Repository) CreateAccount(ctx context.Context, in AccountInput) (models.Account, error) {
@@ -514,16 +543,24 @@ func (r *Repository) CreateAccount(ctx context.Context, in AccountInput) (models
 	if in.Type == "" {
 		in.Type = "Export"
 	}
+	code := strings.TrimSpace(in.Code)
+	if code == "" {
+		minted, err := r.nextAccountCode(ctx)
+		if err != nil {
+			return models.Account{}, err
+		}
+		code = minted
+	}
 	_, err := r.db(ctx).Exec(ctx, `
 		INSERT INTO crm_accounts (
-			id, name, account_type, country, segment, owner, value_display,
-			value_amount, value_currency, health_score, status, dms_bridged,
+			id, code, name, account_type, country, segment, owner, value_display,
+			value_amount, value_currency, credit_limit, health_score, status, dms_bridged,
 			dms_ref, email, phone, address, latitude, longitude,
 			billing_org_id, billing_identity_id, finance_customer_ref,
 			last_touch_at, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$22,$22)
-	`, id, in.Name, in.Type, in.Country, in.Segment, in.Owner, in.Value,
-		nullFloat(in.Amount), nullStr(in.Currency), in.Health, in.Status, in.Bridged,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$24,$24)
+	`, id, code, in.Name, in.Type, in.Country, in.Segment, in.Owner, in.Value,
+		nullFloat(in.Amount), nullStr(in.Currency), in.CreditLimit, in.Health, in.Status, in.Bridged,
 		nullStr(in.DmsRef), in.Email, in.Phone, in.Address, in.Latitude, in.Longitude,
 		nullStr(in.BillingOrgID), nullStr(in.BillingIdentityID), nullStr(in.FinanceCustomerRef), now)
 	if err != nil {
@@ -544,8 +581,24 @@ func (r *Repository) PatchAccount(ctx context.Context, id string, patch map[stri
 	if v, ok := patch["name"].(string); ok {
 		add("name", v)
 	}
+	if v, ok := patch["code"].(string); ok {
+		add("code", strings.TrimSpace(v))
+	}
 	if v, ok := patch["type"].(string); ok {
 		add("account_type", v)
+	}
+	if v, ok := patch["currency"].(string); ok {
+		add("value_currency", nullStr(v))
+	}
+	switch v := patch["credit_limit"].(type) {
+	case float64:
+		add("credit_limit", v)
+	case int:
+		add("credit_limit", float64(v))
+	case string:
+		if n, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			add("credit_limit", n)
+		}
 	}
 	if v, ok := patch["country"].(string); ok {
 		add("country", v)

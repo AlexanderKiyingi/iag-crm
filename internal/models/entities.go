@@ -29,6 +29,8 @@ var DealStages = []string{
 
 type Account struct {
 	ID                 string    `json:"id"`
+	// Code is the human-readable party code (CUS-0001), distinct from the uuid id.
+	Code               string    `json:"code,omitempty"`
 	Name               string    `json:"name"`
 	Type               string    `json:"type"`
 	Country            string    `json:"country"`
@@ -42,6 +44,8 @@ type Account struct {
 	Email              string    `json:"email,omitempty"`
 	Phone              string    `json:"phone,omitempty"`
 	Address            string    `json:"address,omitempty"`
+	Currency           string    `json:"currency,omitempty"`
+	CreditLimit        float64   `json:"credit_limit"`
 	// Outlet / site coordinates for the CRM customer form (migration 0014).
 	Latitude           *float64  `json:"latitude,omitempty"`
 	Longitude          *float64  `json:"longitude,omitempty"`
